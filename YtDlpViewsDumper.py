@@ -1,7 +1,7 @@
 import argparse
-from sqlite3 import Timestamp
 import subprocess
 import json
+from unittest import skip
 from alive_progress import alive_bar
 import matplotlib.pyplot as plt
 from urllib.parse import urlparse
@@ -11,7 +11,7 @@ import collections
 
 SECONDS_IN_MONTH = 60*60*24*30
 
-VLINE_DATE = "24.02.2022"
+VLINE_DATES = ["24.02.2022", "21.09.2022", "24.06.2023"]
 
 def get_video_metadata(video, yt_dlp_path = "yt-dlp"):
     cmd = [yt_dlp_path, "-j", "--no-download", "--no-sponsorblock", video]
@@ -57,9 +57,13 @@ def write_cache(cache_name, data):
     with open(f"{cache_name}.cache.json", "w") as outfile:
         json.dump(data, outfile, indent=4)
 
-def generate_periodical_ticks(timestamp_start, timestamp_end, period_seconds = 60*60*24*30):
+def generate_periodical_ticks(timestamp_start, timestamp_end, period_seconds = 60*60*24*30, max_ticks = 25):
     xticks_values = []
     xticks_labels = []
+
+    ticks_num = (timestamp_end - timestamp_start) / period_seconds
+    if ticks_num > max_ticks:
+        period_seconds = (timestamp_end - timestamp_start) / max_ticks
 
     timestamp = timestamp_start
     while timestamp < timestamp_end:
@@ -91,6 +95,35 @@ def get_bar_data(data_sorted):
 
     return list(bar_data.keys()), list(bar_data.values())
 
+def get_moving_mean(data_sorted, n=100):
+    moving_mean = []
+
+    for i in range(len(data_sorted)):
+        views_accumulator = 0
+        items_num = min(i + 1, n)
+        for j in range(items_num):
+            item = data_sorted[i - j]
+            views = item["views"]
+            views_accumulator += views
+        views_average = views_accumulator / items_num
+
+        entry_clone = data_sorted[i].copy()
+        entry_clone["views_avg"] = views_average
+        moving_mean.append(entry_clone)
+
+    return moving_mean
+
+def dict_split(data_sorted, x_key = "date", y_key = "views"):
+    x_list = []
+    y_list = []
+    for entry in data_sorted:
+        x = entry[x_key]
+        y = entry[y_key]
+
+        x_list.append(x)
+        y_list.append(y)
+    return x_list, y_list
+
 def plot(data, title):
     data_sorted = sorted(data, key=lambda x:x["date"])
 
@@ -112,26 +145,48 @@ def plot(data, title):
     xticks_values, xticks_labels = generate_periodical_ticks(data_sorted[0]["date"], data_sorted[-1]["date"])
     
     plt.suptitle(f'Views of {title}')
-    vline_datetime = datetime.datetime.strptime(VLINE_DATE, '%d.%m.%Y')
-    vline_timestamp = vline_datetime.timestamp()
-    
+     
     plt.subplot(211)
     plt.xlabel("Date")
     plt.ylabel('Total views')
     plt.xticks(xticks_values, xticks_labels, rotation=45)
     plt.plot(timestamps_values, views_total_values, linestyle='-', marker='o')
-    plt.axvline(x = vline_timestamp, color = 'r', label = 'Date of interest', linestyle="--")
+    bot, top = plt.ylim()
+    if bot > 0:
+        plt.ylim(bottom = 0, top = top)
 
+    for date in VLINE_DATES:
+        vline_datetime = datetime.datetime.strptime(date, '%d.%m.%Y')
+        vline_timestamp = vline_datetime.timestamp()
+        plt.axvline(x = vline_timestamp, color = 'r', label = date, linestyle="--")
+
+    moving_mean = get_moving_mean(data_sorted, len(data_sorted) // 10)
+    _, moving_mean_value = dict_split(moving_mean, y_key="views_avg")
 
     plt.subplot(212)
     plt.xlabel("Date")
     plt.ylabel('Video views')
     plt.xticks(xticks_values, xticks_labels, rotation=45)
-    time_bar_values, views_bar_values = get_bar_data(data_sorted)
-    plt.stem(time_bar_values, views_bar_values, 'o')
-    plt.axvline(x = vline_timestamp, color = 'r', label = 'Date of interest', linestyle="--")
+    # time_bar_values, views_bar_values = get_bar_data(data_sorted)
+    plt.plot(timestamps_values, moving_mean_value, linestyle='-')
+    bot, top = plt.ylim()
+    if bot > 0:
+        plt.ylim(bottom = 0, top = top)
+
+    for date in VLINE_DATES:
+        vline_datetime = datetime.datetime.strptime(date, '%d.%m.%Y')
+        vline_timestamp = vline_datetime.timestamp()
+        plt.axvline(x = vline_timestamp, color = 'r', label = date, linestyle="--")
 
     plt.show(block=True)
+
+def find_by_url(dataset, url):
+    if dataset is None:
+        return None
+    for entry in dataset:
+        if "url" in entry and entry["url"] == url:
+            return entry;
+    return None
 
 def main():
     parser = argparse.ArgumentParser(
@@ -162,25 +217,42 @@ def main():
         videos_num = len(videos)
         print(f"{videos_num} videos found!")
 
-        with alive_bar(videos_num, title="Downloading metadata", force_tty=True) as bar:
+        print("Reading from cache and downloading...")
+        username = get_username_from_url(args.channel)
+
+        cached_dataset = None
+        if cache_exists(username):
+            cached_dataset = read_cache(username)
+
+        with alive_bar(videos_num, title="Downloading metadata", theme="classic", force_tty=True) as bar:
             for video in videos:
-                try:
-                    metadata = get_video_metadata(video)
-                    views_count = metadata["view_count"]                
-                    upload_date_str = metadata["upload_date"]
-                    uploader_id = metadata["uploader_id"]
+                cached_entry = find_by_url(cached_dataset, video)
+                if cached_entry is not None:
+                    dataset.append(cached_entry)
+                    bar(1, skipped=True)
+                else:
 
-                    upload_date = datetime.datetime.strptime(upload_date_str, '%Y%m%d')
-                    seconds = upload_date.timestamp()
+                    try:
+                        metadata = get_video_metadata(video)
+                        views_count = metadata["view_count"]                
+                        upload_date_str = metadata["upload_date"]
+                        uploader_id = metadata["uploader_id"]
 
-                    data_entry = {"date" : seconds, "views" : views_count}
-                    dataset.append(data_entry)
+                        upload_date = datetime.datetime.strptime(upload_date_str, '%Y%m%d')
+                        seconds = upload_date.timestamp()
 
-                    write_cache(uploader_id, dataset)
+                        data_entry = {
+                            "date" : seconds,
+                            "views" : views_count,
+                            "url" : video
+                           }
+                        dataset.append(data_entry)
 
-                    bar(1)
-                except Exception as ex:
-                    print(f"Failed to get metadata for {video}: {ex}")
+                        write_cache(uploader_id, dataset)
+
+                        bar(1)
+                    except Exception as ex:
+                        print(f"Failed to get metadata for {video}: {ex}")
         
     print("Done!")
 

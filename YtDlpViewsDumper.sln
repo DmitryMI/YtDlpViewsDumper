@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.4.33110.190
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{888888A0-9F3D-457C-B088-3A5042F75D52}") = "YtDlpViewsDumper", "YtDlpViewsDumper.pyproj", "{6934675F-3F27-4EB8-B1B9-77B0F0F625FA}"
+Project("{888888A0-9F3D-457C-B088-3A5042F75D52}") = "YtDlpViewsDumper", "YtDlpViewsDumper.pyproj", "{F43E93E1-3880-44E0-8711-9576077F80D2}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -11,13 +11,13 @@ Global
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{6934675F-3F27-4EB8-B1B9-77B0F0F625FA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{6934675F-3F27-4EB8-B1B9-77B0F0F625FA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F43E93E1-3880-44E0-8711-9576077F80D2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F43E93E1-3880-44E0-8711-9576077F80D2}.Release|Any CPU.ActiveCfg = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
-		SolutionGuid = {E97032BC-2A06-447B-BE31-F41D984289E2}
+		SolutionGuid = {9A6233F6-9A86-410E-9DA6-ADFCE0716BCB}
 	EndGlobalSection
 EndGlobal

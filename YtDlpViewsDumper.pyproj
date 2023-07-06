@@ -2,7 +2,7 @@
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <SchemaVersion>2.0</SchemaVersion>
-    <ProjectGuid>6934675f-3f27-4eb8-b1b9-77b0f0f625fa</ProjectGuid>
+    <ProjectGuid>f43e93e1-3880-44e0-8711-9576077f80d2</ProjectGuid>
     <ProjectHome>.</ProjectHome>
     <StartupFile>YtDlpViewsDumper.py</StartupFile>
     <SearchPath>
@@ -12,7 +12,7 @@
     <Name>YtDlpViewsDumper</Name>
     <RootNamespace>YtDlpViewsDumper</RootNamespace>
     <LaunchProvider>Standard Python launcher</LaunchProvider>
-    <CommandLineArguments>"https://www.youtube.com/@samamenshova/videos"</CommandLineArguments>
+    <CommandLineArguments>"https://www.youtube.com/@veronikastepanova1978."</CommandLineArguments>
     <EnableNativeCodeDebugging>False</EnableNativeCodeDebugging>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
