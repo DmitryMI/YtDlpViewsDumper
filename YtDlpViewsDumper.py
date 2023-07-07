@@ -7,14 +7,16 @@ import matplotlib.pyplot as plt
 from urllib.parse import urlparse
 import os.path
 import datetime
-import collections
 
 SECONDS_IN_MONTH = 60*60*24*30
 
 VLINE_DATES = ["24.02.2022", "21.09.2022", "24.06.2023"]
 
-def get_video_metadata(video, yt_dlp_path = "yt-dlp"):
-    cmd = [yt_dlp_path, "-j", "--no-download", "--no-sponsorblock", video]
+def get_video_metadata(video, credentials = None, yt_dlp_path = "yt-dlp"):
+    if credentials is not None:
+        cmd = [yt_dlp_path, "-j", "--no-download", "--no-sponsorblock", "--no-warnings", "--username", credentials[0], "--password", credentials[1], video]
+    else:
+        cmd = [yt_dlp_path, "-j", "--no-download", "--no-sponsorblock", "--no-warnings", video]
     result = subprocess.run(cmd, stdout=subprocess.PIPE)
     result_text = result.stdout.decode()
     return json.loads(result_text)
@@ -22,6 +24,7 @@ def get_video_metadata(video, yt_dlp_path = "yt-dlp"):
 def get_video_list(channel, yt_dlp_path = "yt-dlp"):
     result_urls = []
     cmd = [yt_dlp_path, "--flat-playlist", "--print", "url", "--no-sponsorblock", channel]
+    print(" ".join(cmd))
     result = subprocess.run(cmd, stdout=subprocess.PIPE)
     result_text = result.stdout.decode()
     urls = result_text.split('\n')
@@ -39,10 +42,19 @@ def get_id(url, yt_dlp_path = "yt-dlp"):
 
 def get_username_from_url(url):
     parsed = urlparse(url)
-    path = parsed.path
-    path_segments =  path.split("/")
-
-    return path_segments[1]
+    if "youtube" in parsed.hostname:
+        path = parsed.path
+        path_segments =  path.split("/")
+        return path_segments[1]
+    elif "rutube" in parsed.hostname:
+        path = parsed.path
+        path_segments =  path.split("/")
+        return path_segments[2]
+    elif "vk" in parsed.hostname:
+        path = parsed.path
+        path_segments =  path.split("/")
+        return path_segments[2]
+    return None
 
 def cache_exists(cache_name):
     return os.path.exists(f"{cache_name}.cache.json")
@@ -101,6 +113,7 @@ def get_moving_mean(data_sorted, n=100):
     for i in range(len(data_sorted)):
         views_accumulator = 0
         items_num = min(i + 1, n)
+
         for j in range(items_num):
             item = data_sorted[i - j]
             views = item["views"]
@@ -136,6 +149,9 @@ def plot(data, title):
     for entry in data_sorted:
         timestamp = entry["date"]
         views = entry["views"]
+        if views is None or views <= 0:
+            continue
+
         views_total_counter += views
 
         timestamps_values.append(timestamp)
@@ -161,14 +177,13 @@ def plot(data, title):
         plt.axvline(x = vline_timestamp, color = 'r', label = date, linestyle="--")
 
     moving_mean = get_moving_mean(data_sorted, len(data_sorted) // 10)
-    _, moving_mean_value = dict_split(moving_mean, y_key="views_avg")
+    moving_mean_timestamps, moving_mean_value = dict_split(moving_mean, y_key="views_avg")
 
     plt.subplot(212)
     plt.xlabel("Date")
     plt.ylabel('Video views')
     plt.xticks(xticks_values, xticks_labels, rotation=45)
-    # time_bar_values, views_bar_values = get_bar_data(data_sorted)
-    plt.plot(timestamps_values, moving_mean_value, linestyle='-')
+    plt.plot(moving_mean_timestamps, moving_mean_value, linestyle='-')
     bot, top = plt.ylim()
     if bot > 0:
         plt.ylim(bottom = 0, top = top)
@@ -197,9 +212,16 @@ def main():
 
     parser.add_argument("--yt_dlp", required = False, type=str, default="yt-dlp")
     parser.add_argument("--from_cache", required = False, type=bool, default=True)
+    parser.add_argument("--username", required = False, type=str, default=True)
+    parser.add_argument("--password", required = False, type=str, default=True)
     parser.add_argument("channel", type=str)
 
     args = parser.parse_args()
+
+    credentials = None
+    if args.username is not None:
+        credentials = (args.username, args.password)
+
     dataset = []
 
     username = get_username_from_url(args.channel)
@@ -233,7 +255,7 @@ def main():
                 else:
 
                     try:
-                        metadata = get_video_metadata(video)
+                        metadata = get_video_metadata(video, credentials, args.yt_dlp)
                         views_count = metadata["view_count"]                
                         upload_date_str = metadata["upload_date"]
                         uploader_id = metadata["uploader_id"]
@@ -261,4 +283,5 @@ def main():
     return 0 
 
 if __name__ == "__main__":
+    print("Hello!")
     main()
