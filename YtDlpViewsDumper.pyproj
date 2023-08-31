@@ -12,7 +12,7 @@
     <Name>YtDlpViewsDumper</Name>
     <RootNamespace>YtDlpViewsDumper</RootNamespace>
     <LaunchProvider>Standard Python launcher</LaunchProvider>
-    <CommandLineArguments>"https://www.youtube.com/@veronikastepanova1978."</CommandLineArguments>
+    <CommandLineArguments>"https://www.youtube.com/@asmysl_1" --from_cache</CommandLineArguments>
     <EnableNativeCodeDebugging>False</EnableNativeCodeDebugging>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
@@ -24,6 +24,7 @@
     <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="VkViewsDumper.py" />
     <Compile Include="YtDlpViewsDumper.py" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />

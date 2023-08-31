@@ -7,23 +7,55 @@ import matplotlib.pyplot as plt
 from urllib.parse import urlparse
 import os.path
 import datetime
+import yt_dlp
 
 SECONDS_IN_MONTH = 60*60*24*30
 
-VLINE_DATES = ["24.02.2022", "21.09.2022", "24.06.2023"]
+YT_DLP_FLAGS = []
+
+# War - "24.02.2022"
+# Mobilization - "21.09.2022"
+# Prigozhin coup attempt - "24.06.2023"
+# Prigozhin alleged death - "23.08.2023"
+VLINE_DATES = [
+    ("24.02.2022", "War"),
+    ("21.09.2022", "Mobilization"),
+    ("24.06.2023", "Prigozhin coup"),
+    ("23.08.2023", "Prigozhin death")]
+
+ytdl_format_options = {
+            'quiet': True,
+            'no_warnings': True,
+            'default_search': 'auto',
+            'source_address': '0.0.0.0'
+        }
+
+ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
 
 def get_video_metadata(video, credentials = None, yt_dlp_path = "yt-dlp"):
-    if credentials is not None:
-        cmd = [yt_dlp_path, "-j", "--no-download", "--no-sponsorblock", "--no-warnings", "--username", credentials[0], "--password", credentials[1], video]
-    else:
-        cmd = [yt_dlp_path, "-j", "--no-download", "--no-sponsorblock", "--no-warnings", video]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE)
-    result_text = result.stdout.decode()
-    return json.loads(result_text)
+    
+    data = ytdl.extract_info(video, download=False)
+    return data
+
 
 def get_video_list(channel, yt_dlp_path = "yt-dlp"):
+
+    '''
+    ytdl_format_options = {
+            'quiet': True,
+            'no_warnings': True,
+            'default_search': 'auto',
+            'source_address': '0.0.0.0'
+        }
+
+    ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
+    data = ytdl.extract_info(channel, download=False, process=True)
+    return data
+    '''
+    
     result_urls = []
     cmd = [yt_dlp_path, "--flat-playlist", "--print", "url", "--no-sponsorblock", channel]
+    cmd += YT_DLP_FLAGS
     print(" ".join(cmd))
     result = subprocess.run(cmd, stdout=subprocess.PIPE)
     result_text = result.stdout.decode()
@@ -33,6 +65,7 @@ def get_video_list(channel, yt_dlp_path = "yt-dlp"):
         if url != "":
             result_urls.append(url)
     return result_urls
+    
 
 def get_id(url, yt_dlp_path = "yt-dlp"):
     cmd = [yt_dlp_path, "--flat-playlist", "--no-download", "--no-sponsorblock", "--print", "id", url]
@@ -42,18 +75,16 @@ def get_id(url, yt_dlp_path = "yt-dlp"):
 
 def get_username_from_url(url):
     parsed = urlparse(url)
+    path = parsed.path
+    path_segments =  path.split("/")
     if "youtube" in parsed.hostname:
-        path = parsed.path
-        path_segments =  path.split("/")
         return path_segments[1]
     elif "rutube" in parsed.hostname:
-        path = parsed.path
-        path_segments =  path.split("/")
         return path_segments[2]
     elif "vk" in parsed.hostname:
-        path = parsed.path
-        path_segments =  path.split("/")
         return path_segments[2]
+    elif "dzen" in parsed.hostname:
+        return path_segments[1]
     return None
 
 def cache_exists(cache_name):
@@ -117,6 +148,8 @@ def get_moving_mean(data_sorted, n=100):
         for j in range(items_num):
             item = data_sorted[i - j]
             views = item["views"]
+            if views is None or views == 0:
+                continue
             views_accumulator += views
         views_average = views_accumulator / items_num
 
@@ -137,7 +170,22 @@ def dict_split(data_sorted, x_key = "date", y_key = "views"):
         y_list.append(y)
     return x_list, y_list
 
+def add_vertical_lines():
+    for date, text in VLINE_DATES:
+        vline_datetime = datetime.datetime.strptime(date, '%d.%m.%Y')
+        vline_timestamp = vline_datetime.timestamp()
+        plt.axvline(x = vline_timestamp, color = 'r', label = date, linestyle="--")
+
+        bot, top = plt.ylim()
+
+        plt.text(x = vline_timestamp, y = (top - bot) / 2, s=text, rotation="vertical")
+
 def plot(data, title):
+    xticks_fontsize = 8
+    xticks_rotation = 25
+
+    plt.figure(figsize=(20, 10))
+
     data_sorted = sorted(data, key=lambda x:x["date"])
 
     timestamps_values = []
@@ -162,37 +210,46 @@ def plot(data, title):
     
     plt.suptitle(f'Views of {title}')
      
-    plt.subplot(211)
+    plt.subplot(311)
+    plt.title("Accumulated views")
     plt.xlabel("Date")
-    plt.ylabel('Total views')
-    plt.xticks(xticks_values, xticks_labels, rotation=45)
+    plt.ylabel('Views')
+    plt.xticks(xticks_values, xticks_labels, rotation=xticks_rotation, fontsize=xticks_fontsize)
     plt.plot(timestamps_values, views_total_values, linestyle='-', marker='o')
     bot, top = plt.ylim()
     if bot > 0:
         plt.ylim(bottom = 0, top = top)
 
-    for date in VLINE_DATES:
-        vline_datetime = datetime.datetime.strptime(date, '%d.%m.%Y')
-        vline_timestamp = vline_datetime.timestamp()
-        plt.axvline(x = vline_timestamp, color = 'r', label = date, linestyle="--")
+    add_vertical_lines()
 
     moving_mean = get_moving_mean(data_sorted, len(data_sorted) // 10)
     moving_mean_timestamps, moving_mean_value = dict_split(moving_mean, y_key="views_avg")
 
-    plt.subplot(212)
+    plt.subplot(312)
+    plt.title("Views per video (moving average)")
     plt.xlabel("Date")
-    plt.ylabel('Video views')
-    plt.xticks(xticks_values, xticks_labels, rotation=45)
+    plt.ylabel('Views')
+    plt.xticks(xticks_values, xticks_labels, rotation=xticks_rotation, fontsize=xticks_fontsize)
     plt.plot(moving_mean_timestamps, moving_mean_value, linestyle='-')
     bot, top = plt.ylim()
     if bot > 0:
         plt.ylim(bottom = 0, top = top)
 
-    for date in VLINE_DATES:
-        vline_datetime = datetime.datetime.strptime(date, '%d.%m.%Y')
-        vline_timestamp = vline_datetime.timestamp()
-        plt.axvline(x = vline_timestamp, color = 'r', label = date, linestyle="--")
+    add_vertical_lines()
 
+    plt.subplot(313)
+    plt.title("Views per video")
+    plt.xlabel("Date")
+    plt.ylabel('Views')
+    plt.xticks(xticks_values, xticks_labels, rotation=xticks_rotation, fontsize=xticks_fontsize)
+    plt.plot(timestamps_values, views_values, "bo", markersize=2)
+    # bot, top = plt.ylim()
+    # if bot > 0:
+    #     plt.ylim(bottom = 0, top = top)
+
+    add_vertical_lines()
+
+    plt.tight_layout(h_pad=1)
     plt.show(block=True)
 
 def find_by_url(dataset, url):
@@ -211,9 +268,9 @@ def main():
     )
 
     parser.add_argument("--yt_dlp", required = False, type=str, default="yt-dlp")
-    parser.add_argument("--from_cache", required = False, type=bool, default=True)
-    parser.add_argument("--username", required = False, type=str, default=True)
-    parser.add_argument("--password", required = False, type=str, default=True)
+    parser.add_argument("--from_cache", required = False, default=False, action="store_true")
+    parser.add_argument("--username", required = False, type=str, default=None)
+    parser.add_argument("--password", required = False, type=str, default=None)
     parser.add_argument("channel", type=str)
 
     args = parser.parse_args()
@@ -258,7 +315,11 @@ def main():
                         metadata = get_video_metadata(video, credentials, args.yt_dlp)
                         views_count = metadata["view_count"]                
                         upload_date_str = metadata["upload_date"]
-                        uploader_id = metadata["uploader_id"]
+
+                        if "uploader_id" in metadata:
+                            uploader_id = metadata["uploader_id"]
+                        else:
+                            uploader_id = username
 
                         upload_date = datetime.datetime.strptime(upload_date_str, '%Y%m%d')
                         seconds = upload_date.timestamp()
