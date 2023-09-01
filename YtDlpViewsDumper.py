@@ -221,7 +221,7 @@ def add_vertical_lines():
 
         plt.text(x = vline_timestamp, y = (top - bot) / 2, s=text, rotation="vertical")
 
-def plot(data, title, moving_average_degree, moving_mean_separate = False):
+def plot(channel_data_dict: dict, title, moving_average_degree, moving_mean_separate = False):
     xticks_fontsize = 8
     xticks_rotation = 25
     marker_size_total = 4
@@ -232,55 +232,77 @@ def plot(data, title, moving_average_degree, moving_mean_separate = False):
     else:
         total_plots = 2
 
-
     plt.figure(figsize=(20, 10))
-
-    data_sorted = sorted(data, key=lambda x:x["date"])
-
-    timestamps_values = []
-    views_values = []
-    views_total_values = []
-    
-    views_total_counter = 0
-
-    for entry in data_sorted:
-        timestamp = entry["date"]
-        views = entry["views"]
-        if views is None or views <= 0:
-            continue
-
-        views_total_counter += views
-
-        timestamps_values.append(timestamp)
-        views_values.append(views)
-        views_total_values.append(views_total_counter)
-
-    xticks_values, xticks_labels = generate_periodical_ticks(data_sorted[0]["date"], data_sorted[-1]["date"])
-    
     plt.suptitle(f'Views of {title}')
-     
+
+    timestamp_min = None
+    timestamp_max = None
+
+    for channel, (data, username) in channel_data_dict.items():
+        data_sorted = sorted(data, key=lambda x:x["date"])
+        channel_data_dict[channel] = (data, username, data_sorted)
+
+        timestamp_min_local, timestamp_max_local = data_sorted[0]["date"], data_sorted[-1]["date"]
+
+        if not timestamp_min or timestamp_min_local < timestamp_min:
+            timestamp_min = timestamp_min_local
+
+        if not timestamp_max or timestamp_max_local > timestamp_max:
+            timestamp_max = timestamp_max_local
+
+
     plt.subplot(total_plots, 1, 1)
     plt.title("Accumulated views")
     plt.xlabel("Date")
     plt.ylabel('Views')
+
+    xticks_values, xticks_labels = generate_periodical_ticks(timestamp_min, timestamp_max)
     plt.xticks(xticks_values, xticks_labels, rotation=xticks_rotation, fontsize=xticks_fontsize)
-    plt.plot(timestamps_values, views_total_values, linestyle='-', marker='o', markersize=marker_size_total)
+
+    for channel, (data, username, data_sorted) in channel_data_dict.items():
+        timestamps_values = []
+        views_values = []
+        views_total_values = []
+    
+        views_total_counter = 0
+
+        for entry in data_sorted:
+            timestamp = entry["date"]
+            views = entry["views"]
+            if views is None or views <= 0:
+                continue
+
+            views_total_counter += views
+
+            timestamps_values.append(timestamp)
+            views_values.append(views)
+            views_total_values.append(views_total_counter)
+
+        plt.plot(timestamps_values, views_total_values, linestyle='-', marker='o', markersize=marker_size_total, label=username)
+
+    plt.legend()
+
     bot, top = plt.ylim()
     if bot > 0:
         plt.ylim(bottom = 0, top = top)
 
     add_vertical_lines()
 
-    # moving_mean = get_moving_mean(data_sorted, len(data_sorted) // 10)
-    moving_mean = get_moving_mean(data_sorted, moving_average_degree, weight_linear)
-    moving_mean_timestamps, moving_mean_value = dict_split(moving_mean, y_key="views_avg")
 
     plt.subplot(total_plots, 1, 2)
     plt.title(f"Views per video (moving average, N = {moving_average_degree})")
     plt.xlabel("Date")
     plt.ylabel('Views')
     plt.xticks(xticks_values, xticks_labels, rotation=xticks_rotation, fontsize=xticks_fontsize)
-    plt.plot(moving_mean_timestamps, moving_mean_value, linestyle='-')
+    plt.legend()
+
+    for channel, (data, username, data_sorted) in channel_data_dict.items():
+        moving_mean = get_moving_mean(data_sorted, moving_average_degree, weight_linear)
+        moving_mean_timestamps, moving_mean_value = dict_split(moving_mean, y_key="views_avg")
+        plt.plot(moving_mean_timestamps, moving_mean_value, linestyle='-', label=username)
+
+    plt.legend()
+
     bot, top = plt.ylim()
     if bot > 0:
         plt.ylim(bottom = 0, top = top)
@@ -292,10 +314,26 @@ def plot(data, title, moving_average_degree, moving_mean_separate = False):
         plt.title("Views per video")
         plt.xlabel("Date")
         plt.ylabel('Views')
-        plt.xticks(xticks_values, xticks_labels, rotation=xticks_rotation, fontsize=xticks_fontsize)
-        add_vertical_lines()
+        plt.xticks(xticks_values, xticks_labels, rotation=xticks_rotation, fontsize=xticks_fontsize) 
     
-    plt.plot(timestamps_values, views_values, "bo", markersize=marker_size_single)
+    for channel, (data, username, data_sorted) in channel_data_dict.items():
+        timestamps_values = []
+        views_values = []
+
+        for entry in data_sorted:
+            timestamp = entry["date"]
+            views = entry["views"]
+            if views is None or views <= 0:
+                continue
+
+            timestamps_values.append(timestamp)
+            views_values.append(views)
+
+        plt.plot(timestamps_values, views_values, "o", markersize=marker_size_single, label=username)
+
+    if moving_mean_separate:
+        plt.legend()
+        add_vertical_lines()
 
     plt.tight_layout(h_pad=1)
     plt.show(block=True)
@@ -460,15 +498,18 @@ async def main():
 
     channel_data_dict = {}
 
+    usernames = []
+
     for channel in args.channels:
         dataset, username = await fetch_channel_data(channel, cache_dir, args.yt_dlp, args.jobs, date_from_seconds, args.from_cache)
         channel_data_dict[channel] = (dataset, username)
+        usernames.append(username)
 
-        plot_title = username
-        if date_from_seconds:
-            plot_title = f"{plot_title} (from {date_from_str})"
+    plot_title = "Views of " + ", ".join(usernames)
+    if date_from_seconds:
+        plot_title = f"{plot_title} (from {date_from_str})"
 
-        plot(dataset, plot_title, moving_average_degree)
+    plot(channel_data_dict, plot_title, moving_average_degree)
 
     return 0 
 
