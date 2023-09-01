@@ -295,14 +295,13 @@ def plot(channel_data_dict: dict, title, moving_average_degree, moving_mean_sepa
     plt.xlabel("Date")
     plt.ylabel('Views')
     plt.xticks(xticks_values, xticks_labels, rotation=xticks_rotation, fontsize=xticks_fontsize)
-    plt.legend()
 
     line_colors = []
 
     for channel, (data, username, data_sorted) in channel_data_dict.items():
         moving_mean = get_moving_mean(data_sorted, moving_average_degree, weight_linear)
         moving_mean_timestamps, moving_mean_value = dict_split(moving_mean, y_key="views_avg")
-        line = plt.plot(moving_mean_timestamps, moving_mean_value, linestyle='-', label=username)
+        line = plt.plot(moving_mean_timestamps, moving_mean_value, linestyle='-', label=username + " (moving average)")
         if line:
             line_colors.append(line[0]._color)
 
@@ -336,7 +335,6 @@ def plot(channel_data_dict: dict, title, moving_average_degree, moving_mean_sepa
 
         if not moving_mean_separate:
 
-            # #1f77b4
             color = get_darker_color(line_colors[i])
 
             plt.plot(timestamps_values, views_values, "^", markersize=marker_size_single, label=username, color=color)
@@ -387,17 +385,21 @@ def fetch_metadata(video):
         return None
 
 
-async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds, offline):
+async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds, cache_expiration_seconds, offline):
     dataset = []
+
+    timestamp_current = datetime.datetime.now().timestamp()
 
     username = get_username_from_url(channel)
 
-    if offline and cache_exists(username):
+    if offline and cache_exists(cache_dir, username):
         print("Reading from cache...")
         username = get_username_from_url(channel)
 
         dataset = read_cache(cache_dir, username)
     else:
+        outdated_cache_num = 0
+
         print(f"Downloading video list from {channel}... ", end="")
         videos = get_video_list(channel, yt_dlp)
         print(" Done!")
@@ -416,13 +418,30 @@ async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds
             videos_to_load = []
             
             for video in videos:
+                must_download = True
                 cached_entry = find_by_url(cached_dataset, video)
                 if cached_entry is not None:
-                    dataset.append(cached_entry)
-                    bar(1, skipped=True)
-                else:
+                    cache_timestamp = cached_entry["cache_timestamp"] if "cache_timestamp" in cached_entry else None
+                    
+                    if cache_timestamp is None:
+                        cache_timestamp = datetime.datetime.now().timestamp()
+                    
+                    if cache_expiration_seconds and \
+                        cache_expiration_seconds > 0 and \
+                        timestamp_current - cache_timestamp > cache_expiration_seconds:
+
+                        outdated_cache_num += 1
+                    else:
+                        dataset.append(cached_entry)
+                        bar(1, skipped=True)
+                        must_download = False
+
+                if must_download:
                     videos_to_load.append(video)
             
+            if outdated_cache_num > 0:
+                print(f"{outdated_cache_num} cache entries were outdated")
+
             futures = []
             with ThreadPoolExecutor(max_workers=jobs) as executor:
                 for video in videos_to_load:
@@ -443,6 +462,7 @@ async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds
 
                     for future in done_futures:
                         metadata = future.result()
+                        metadata["cache_timestamp"] = datetime.datetime.now().timestamp()
                         dataset.append(metadata)
                         write_cache(cache_dir, username, dataset)
                         
@@ -466,7 +486,7 @@ async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds
                     if not has_active_futures:
                         break
 
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.25)
 
     print(f"Done for {channel}!")
     return dataset, username
@@ -480,18 +500,20 @@ async def main():
     )
 
     parser.add_argument("--yt_dlp", required = False, type=str, default="yt-dlp")
-    parser.add_argument("--from_cache", required = False, default=False, action="store_true")
+    parser.add_argument("--cache_expiration", required = False, default=30)
+    parser.add_argument("--offline", required = False, default=False, action="store_true")
     parser.add_argument("--username", required = False, type=str, default=None)
     parser.add_argument("--password", required = False, type=str, default=None)
     parser.add_argument("--date_from", required = False, type=str, default=None)
     parser.add_argument("--ma_degree", required = False, type=int, default=9)
     parser.add_argument("--cache_dir", required = False, type=str, default="cache")
-    parser.add_argument("-j", "--jobs", required = False, type=int, default=32)
+    parser.add_argument("-j", "--jobs", required = False, type=int, default=64)
     parser.add_argument("--channels", type=str, nargs="+")
 
     args = parser.parse_args()
 
     cache_dir = args.cache_dir
+    cache_expiration_seconds = args.cache_expiration * 24 * 60 * 60
 
     date_from_str = args.date_from
     if date_from_str:
@@ -513,7 +535,7 @@ async def main():
     usernames = []
 
     for channel in args.channels:
-        dataset, username = await fetch_channel_data(channel, cache_dir, args.yt_dlp, args.jobs, date_from_seconds, args.from_cache)
+        dataset, username = await fetch_channel_data(channel, cache_dir, args.yt_dlp, args.jobs, date_from_seconds, cache_expiration_seconds, args.offline)
         channel_data_dict[channel] = (dataset, username)
         usernames.append(username)
 
