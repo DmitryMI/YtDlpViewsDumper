@@ -403,7 +403,7 @@ async def main():
                     videos_to_load.append(video)
             
             futures = []
-            with ThreadPoolExecutor(max_workers=128) as executor:
+            with ThreadPoolExecutor(max_workers=32) as executor:
                 for video in videos_to_load:
                     future = executor.submit(fetch_metadata, video)
                     futures.append(future)
@@ -417,13 +417,29 @@ async def main():
                         if not future.done():
                             has_active_futures = True
                             continue
-                        done_futures.append(future)
+                        if not future.cancelled():
+                            done_futures.append(future)
 
                     for future in done_futures:
-                        futures.remove(future)
                         metadata = future.result()
                         dataset.append(metadata)
                         write_cache(cache_dir, username, dataset)
+                        
+                        upload_date_seconds = metadata["date"]
+                        upload_date = datetime.datetime.fromtimestamp(upload_date_seconds)
+
+                        if date_from_seconds and upload_date_seconds < date_from_seconds:
+                            print("Minimum timestamp reached")
+                            future_index = futures.index(future)
+
+                            if len(futures) > future_index:
+                                discarded_futures = futures[future_index + 1 : -1]
+                                for i, discard_future in enumerate(discarded_futures):
+                                    discard_future.cancel()
+
+                        futures.remove(future)
+
+                        bar.title(upload_date.strftime("%d.%m.%Y"))
                         bar(1)
 
                     if not has_active_futures:
