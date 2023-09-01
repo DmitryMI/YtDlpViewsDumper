@@ -12,7 +12,7 @@
     <Name>YtDlpViewsDumper</Name>
     <RootNamespace>YtDlpViewsDumper</RootNamespace>
     <LaunchProvider>Standard Python launcher</LaunchProvider>
-    <CommandLineArguments>"https://www.youtube.com/@Popularpolitics" --date_from 01.01.2021</CommandLineArguments>
+    <CommandLineArguments>"https://www.youtube.com/@TamaraEidelmanHistory" --date_from 01.01.2021</CommandLineArguments>
     <EnableNativeCodeDebugging>False</EnableNativeCodeDebugging>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">

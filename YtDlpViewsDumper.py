@@ -9,6 +9,8 @@ import os.path
 import datetime
 import yt_dlp
 import os
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 SECONDS_IN_MONTH = 60*60*24*30
 
@@ -33,10 +35,17 @@ ytdl_format_options = {
 
 ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
 
+thread_executor = ThreadPoolExecutor(32)
+
 def get_video_metadata(video, credentials = None, yt_dlp_path = "yt-dlp"):
     
+    # print(f"Downloading metadata for {video}...")
     data = ytdl.extract_info(video, download=False)
+    # print(f"Metadata downloaded for {video}!")
     return data
+
+async def get_video_metadata_async(video, loop):
+    pass
 
 
 def get_video_list(channel, yt_dlp_path = "yt-dlp"):
@@ -295,7 +304,35 @@ def find_by_url(dataset, url):
             return entry;
     return None
 
-def main():
+def fetch_metadata(video):
+    try:
+        metadata = get_video_metadata(video)
+
+        views_count = metadata["view_count"]                
+        upload_date_str = metadata["upload_date"]
+
+        if "uploader_id" in metadata:
+            uploader_id = metadata["uploader_id"]
+        else:
+            uploader_id = None
+
+        upload_date = datetime.datetime.strptime(upload_date_str, '%Y%m%d')
+        seconds = upload_date.timestamp()
+
+        data_entry = {
+            "date" : seconds,
+            "views" : views_count,
+            "url" : video,
+            "uploader_id": uploader_id
+           }
+
+        return data_entry
+
+    except Exception as ex:
+        print(f"Failed to get metadata for {video}: {ex}")
+        return None
+
+async def main():
     parser = argparse.ArgumentParser(
         prog="Youtube Views dumper",
         description="Collects information about video views using yt-dlp",
@@ -355,45 +392,45 @@ def main():
             cached_dataset = read_cache(cache_dir, username)
 
         with alive_bar(videos_num, title="Downloading metadata", theme="classic", force_tty=True, title_length=0) as bar:
+            videos_to_load = []
+            
             for video in videos:
                 cached_entry = find_by_url(cached_dataset, video)
                 if cached_entry is not None:
                     dataset.append(cached_entry)
                     bar(1, skipped=True)
                 else:
+                    videos_to_load.append(video)
+            
+            futures = []
+            with ThreadPoolExecutor(max_workers=128) as executor:
+                for video in videos_to_load:
+                    future = executor.submit(fetch_metadata, video)
+                    futures.append(future)
+                    
+                while True:
+                    has_active_futures = False
 
-                    try:
-                        metadata = get_video_metadata(video, credentials, args.yt_dlp)
-                        views_count = metadata["view_count"]                
-                        upload_date_str = metadata["upload_date"]
+                    done_futures = []
 
-                        if "uploader_id" in metadata:
-                            uploader_id = metadata["uploader_id"]
-                        else:
-                            uploader_id = username
+                    for future in futures:
+                        if not future.done():
+                            has_active_futures = True
+                            continue
+                        done_futures.append(future)
 
-                        upload_date = datetime.datetime.strptime(upload_date_str, '%Y%m%d')
-                        seconds = upload_date.timestamp()
-
-                        if date_from_seconds and seconds < date_from_seconds:
-                            print("Minimal timestamp reached")
-                            break
-
-                        data_entry = {
-                            "date" : seconds,
-                            "views" : views_count,
-                            "url" : video
-                           }
-
-                        dataset.append(data_entry)
-
-                        write_cache(cache_dir, uploader_id, dataset)
-
-                        bar.title(f"{upload_date.strftime('%d.%m.%Y')}")
-
+                    for future in done_futures:
+                        futures.remove(future)
+                        metadata = future.result()
+                        dataset.append(metadata)
+                        write_cache(cache_dir, username, dataset)
                         bar(1)
-                    except Exception as ex:
-                        print(f"Failed to get metadata for {video}: {ex}")
+
+                    if not has_active_futures:
+                        break
+
+                    await asyncio.sleep(0.1)
+
         
     print("Done!")
 
@@ -406,5 +443,5 @@ def main():
     return 0 
 
 if __name__ == "__main__":
-    print("Hello!")
-    main()
+    # main()
+    asyncio.run(main())
