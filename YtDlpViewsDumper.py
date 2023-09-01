@@ -11,6 +11,8 @@ import yt_dlp
 import os
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+import atexit
+
 
 SECONDS_IN_MONTH = 60*60*24*30
 
@@ -105,6 +107,17 @@ def cache_exists(cache_dir, cache_name):
     cache_file = os.path.join(cache_dir, f"{cache_name}.cache.json")
     return os.path.exists(cache_file)
 
+def get_cache_creation_time(cache_dir, cache_name):
+    if not cache_dir:
+        cache_dir = os.getcwd()
+
+    cache_file = os.path.join(cache_dir, f"{cache_name}.cache.json")
+
+    if not os.path.exists(cache_file):
+        return None
+
+    return os.path.getctime(cache_file)
+
 def read_cache(cache_dir, cache_name):
     if not cache_dir:
         cache_dir = os.getcwd()
@@ -124,6 +137,7 @@ def write_cache(cache_dir, cache_name, data):
 
     with open(cache_file, "w") as outfile:
         json.dump(data, outfile, indent=4)
+
 
 def generate_periodical_ticks(timestamp_start, timestamp_end, period_seconds = 60*60*24*30, max_ticks = 25):
     xticks_values = []
@@ -222,7 +236,7 @@ def add_vertical_lines():
 
         plt.text(x = vline_timestamp, y = (top - bot) / 2, s=text, rotation="vertical")
 
-def plot(channel_data_dict: dict, title, moving_average_degree, moving_mean_separate = False):
+def plot(channel_data_dict: dict, title, date_from_seconds, moving_average_degree, moving_mean_separate = False):
     xticks_fontsize = 8
     xticks_rotation = 25
     marker_size_total = 4
@@ -286,6 +300,8 @@ def plot(channel_data_dict: dict, title, moving_average_degree, moving_mean_sepa
     bot, top = plt.ylim()
     if bot > 0:
         plt.ylim(bottom = 0, top = top)
+    if date_from_seconds and date_from_seconds > 0:
+        plt.xlim(left=date_from_seconds)
 
     add_vertical_lines()
 
@@ -310,6 +326,8 @@ def plot(channel_data_dict: dict, title, moving_average_degree, moving_mean_sepa
     bot, top = plt.ylim()
     if bot > 0:
         plt.ylim(bottom = 0, top = top)
+    if date_from_seconds and date_from_seconds > 0:
+        plt.xlim(left=date_from_seconds)
 
     add_vertical_lines()
 
@@ -343,6 +361,8 @@ def plot(channel_data_dict: dict, title, moving_average_degree, moving_mean_sepa
 
     if moving_mean_separate:
         plt.legend()
+        if date_from_seconds and date_from_seconds > 0:
+            plt.xlim(left=date_from_seconds)
         add_vertical_lines()
 
     plt.tight_layout(h_pad=1)
@@ -424,7 +444,8 @@ async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds
                     cache_timestamp = cached_entry["cache_timestamp"] if "cache_timestamp" in cached_entry else None
                     
                     if cache_timestamp is None:
-                        cache_timestamp = datetime.datetime.now().timestamp()
+                        # cache_timestamp = datetime.datetime.now().timestamp()
+                        cache_timestamp = get_cache_creation_time(cache_dir, username)
                     
                     if cache_expiration_seconds and \
                         cache_expiration_seconds > 0 and \
@@ -444,6 +465,7 @@ async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds
 
             futures = []
             with ThreadPoolExecutor(max_workers=jobs) as executor:
+
                 for video in videos_to_load:
                     future = executor.submit(fetch_metadata, video)
                     futures.append(future)
@@ -462,21 +484,22 @@ async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds
 
                     for future in done_futures:
                         metadata = future.result()
-                        metadata["cache_timestamp"] = datetime.datetime.now().timestamp()
-                        dataset.append(metadata)
-                        write_cache(cache_dir, username, dataset)
+                        if metadata:
+                            metadata["cache_timestamp"] = datetime.datetime.now().timestamp()
+                            dataset.append(metadata)
+                            write_cache(cache_dir, username, dataset)
                         
-                        upload_date_seconds = metadata["date"]
-                        upload_date = datetime.datetime.fromtimestamp(upload_date_seconds)
+                            upload_date_seconds = metadata["date"]
+                            upload_date = datetime.datetime.fromtimestamp(upload_date_seconds)
 
-                        if date_from_seconds and upload_date_seconds < date_from_seconds:
-                            print("Minimum timestamp reached")
-                            future_index = futures.index(future)
+                            if date_from_seconds and upload_date_seconds < date_from_seconds:
+                                print("Minimum timestamp reached")
+                                future_index = futures.index(future)
 
-                            if len(futures) > future_index:
-                                discarded_futures = futures[future_index + 1 : -1]
-                                for i, discard_future in enumerate(discarded_futures):
-                                    discard_future.cancel()
+                                if len(futures) > future_index:
+                                    discarded_futures = futures[future_index + 1 : -1]
+                                    for i, discard_future in enumerate(discarded_futures):
+                                        discard_future.cancel()
 
                         futures.remove(future)
 
@@ -506,6 +529,7 @@ async def main():
     parser.add_argument("--password", required = False, type=str, default=None)
     parser.add_argument("--date_from", required = False, type=str, default=None)
     parser.add_argument("--ma_degree", required = False, type=int, default=9)
+    parser.add_argument("--ma_separate", required = False, action="store_true")
     parser.add_argument("--cache_dir", required = False, type=str, default="cache")
     parser.add_argument("-j", "--jobs", required = False, type=int, default=64)
     parser.add_argument("--channels", type=str, nargs="+")
@@ -543,7 +567,7 @@ async def main():
     if date_from_seconds:
         plot_title = f"{plot_title} (from {date_from_str})"
 
-    plot(channel_data_dict, plot_title, moving_average_degree)
+    plot(channel_data_dict, plot_title, date_from_seconds, moving_average_degree, args.ma_separate)
 
     return 0 
 
