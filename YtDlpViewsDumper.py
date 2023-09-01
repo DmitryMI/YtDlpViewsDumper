@@ -170,11 +170,11 @@ def weight_linear(n, index_shift):
 
 def get_moving_mean(data_sorted, n, weight_callable):
     moving_mean = []
-    divisor = 0
+    
     for i in range(len(data_sorted)):
         views_accumulator = 0
         items_num = min(i + 1, n)
-
+        divisor = 0
         for j in range(items_num):
             index_shift = j - items_num // 2            
             # print(index_shift)
@@ -187,7 +187,7 @@ def get_moving_mean(data_sorted, n, weight_callable):
 
             weight = 1 
             if weight_callable:
-                weight *= weight_callable(n, index_shift)
+                weight = weight_callable(n, index_shift)
 
             views_accumulator += views * weight
             divisor += weight
@@ -221,11 +221,17 @@ def add_vertical_lines():
 
         plt.text(x = vline_timestamp, y = (top - bot) / 2, s=text, rotation="vertical")
 
-def plot(data, title, moving_average_degree):
+def plot(data, title, moving_average_degree, moving_mean_separate = False):
     xticks_fontsize = 8
     xticks_rotation = 25
     marker_size_total = 4
     marker_size_single = 2
+
+    if moving_mean_separate:
+        total_plots = 3
+    else:
+        total_plots = 2
+
 
     plt.figure(figsize=(20, 10))
 
@@ -253,7 +259,7 @@ def plot(data, title, moving_average_degree):
     
     plt.suptitle(f'Views of {title}')
      
-    plt.subplot(311)
+    plt.subplot(total_plots, 1, 1)
     plt.title("Accumulated views")
     plt.xlabel("Date")
     plt.ylabel('Views')
@@ -269,7 +275,7 @@ def plot(data, title, moving_average_degree):
     moving_mean = get_moving_mean(data_sorted, moving_average_degree, weight_linear)
     moving_mean_timestamps, moving_mean_value = dict_split(moving_mean, y_key="views_avg")
 
-    plt.subplot(312)
+    plt.subplot(total_plots, 1, 2)
     plt.title(f"Views per video (moving average, N = {moving_average_degree})")
     plt.xlabel("Date")
     plt.ylabel('Views')
@@ -281,17 +287,15 @@ def plot(data, title, moving_average_degree):
 
     add_vertical_lines()
 
-    plt.subplot(313)
-    plt.title("Views per video")
-    plt.xlabel("Date")
-    plt.ylabel('Views')
-    plt.xticks(xticks_values, xticks_labels, rotation=xticks_rotation, fontsize=xticks_fontsize)
+    if moving_mean_separate:
+        plt.subplot(313)
+        plt.title("Views per video")
+        plt.xlabel("Date")
+        plt.ylabel('Views')
+        plt.xticks(xticks_values, xticks_labels, rotation=xticks_rotation, fontsize=xticks_fontsize)
+        add_vertical_lines()
+    
     plt.plot(timestamps_values, views_values, "bo", markersize=marker_size_single)
-    # bot, top = plt.ylim()
-    # if bot > 0:
-    #     plt.ylim(bottom = 0, top = top)
-
-    add_vertical_lines()
 
     plt.tight_layout(h_pad=1)
     plt.show(block=True)
@@ -346,6 +350,7 @@ async def main():
     parser.add_argument("--date_from", required = False, type=str, default=None)
     parser.add_argument("--ma_degree", required = False, type=int, default=9)
     parser.add_argument("--cache_dir", required = False, type=str, default="cache")
+    parser.add_argument("-j", "--jobs", required = False, type=int, default=32)
     parser.add_argument("channel", type=str)
 
     args = parser.parse_args()
@@ -403,7 +408,7 @@ async def main():
                     videos_to_load.append(video)
             
             futures = []
-            with ThreadPoolExecutor(max_workers=32) as executor:
+            with ThreadPoolExecutor(max_workers=args.jobs) as executor:
                 for video in videos_to_load:
                     future = executor.submit(fetch_metadata, video)
                     futures.append(future)
@@ -445,7 +450,7 @@ async def main():
                     if not has_active_futures:
                         break
 
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.5)
 
         
     print("Done!")
