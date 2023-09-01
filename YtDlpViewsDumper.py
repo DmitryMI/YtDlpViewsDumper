@@ -16,10 +16,6 @@ SECONDS_IN_MONTH = 60*60*24*30
 
 YT_DLP_FLAGS = []
 
-# War - "24.02.2022"
-# Mobilization - "21.09.2022"
-# Prigozhin coup attempt - "24.06.2023"
-# Prigozhin alleged death - "23.08.2023"
 VLINE_DATES = [
     ("24.02.2022", "War"),
     ("21.09.2022", "Mobilization"),
@@ -39,13 +35,18 @@ thread_executor = ThreadPoolExecutor(32)
 
 def get_video_metadata(video, credentials = None, yt_dlp_path = "yt-dlp"):
     
-    # print(f"Downloading metadata for {video}...")
     data = ytdl.extract_info(video, download=False)
-    # print(f"Metadata downloaded for {video}!")
     return data
 
-async def get_video_metadata_async(video, loop):
-    pass
+def get_darker_color(rgb_hex_str):
+    if rgb_hex_str[0] == "#":
+        rgb_hex_str = rgb_hex_str[1:]
+
+    r = round(int(rgb_hex_str[0:2], 16) * 0.75)
+    g = round(int(rgb_hex_str[2:4], 16) * 0.75)
+    b = round(int(rgb_hex_str[4:6], 16) * 0.75)
+
+    return f"#{r:02X}{g:02X}{b:02X}"
 
 
 def get_video_list(channel, yt_dlp_path = "yt-dlp"):
@@ -296,10 +297,14 @@ def plot(channel_data_dict: dict, title, moving_average_degree, moving_mean_sepa
     plt.xticks(xticks_values, xticks_labels, rotation=xticks_rotation, fontsize=xticks_fontsize)
     plt.legend()
 
+    line_colors = []
+
     for channel, (data, username, data_sorted) in channel_data_dict.items():
         moving_mean = get_moving_mean(data_sorted, moving_average_degree, weight_linear)
         moving_mean_timestamps, moving_mean_value = dict_split(moving_mean, y_key="views_avg")
-        plt.plot(moving_mean_timestamps, moving_mean_value, linestyle='-', label=username)
+        line = plt.plot(moving_mean_timestamps, moving_mean_value, linestyle='-', label=username)
+        if line:
+            line_colors.append(line[0]._color)
 
     plt.legend()
 
@@ -310,13 +315,13 @@ def plot(channel_data_dict: dict, title, moving_average_degree, moving_mean_sepa
     add_vertical_lines()
 
     if moving_mean_separate:
-        plt.subplot(313)
+        plt.subplot(total_plots, 1, 3)
         plt.title("Views per video")
         plt.xlabel("Date")
         plt.ylabel('Views')
         plt.xticks(xticks_values, xticks_labels, rotation=xticks_rotation, fontsize=xticks_fontsize) 
     
-    for channel, (data, username, data_sorted) in channel_data_dict.items():
+    for i, (channel, (data, username, data_sorted)) in enumerate(channel_data_dict.items()):
         timestamps_values = []
         views_values = []
 
@@ -329,7 +334,14 @@ def plot(channel_data_dict: dict, title, moving_average_degree, moving_mean_sepa
             timestamps_values.append(timestamp)
             views_values.append(views)
 
-        plt.plot(timestamps_values, views_values, "o", markersize=marker_size_single, label=username)
+        if not moving_mean_separate:
+
+            # #1f77b4
+            color = get_darker_color(line_colors[i])
+
+            plt.plot(timestamps_values, views_values, "^", markersize=marker_size_single, label=username, color=color)
+        else:
+            plt.plot(timestamps_values, views_values, "o", markersize=marker_size_single, label=username)
 
     if moving_mean_separate:
         plt.legend()
