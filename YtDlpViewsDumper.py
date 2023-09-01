@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 import os.path
 import datetime
 import yt_dlp
+import os
 
 SECONDS_IN_MONTH = 60*60*24*30
 
@@ -87,17 +88,31 @@ def get_username_from_url(url):
         return path_segments[1]
     return None
 
-def cache_exists(cache_name):
-    return os.path.exists(f"{cache_name}.cache.json")
+def cache_exists(cache_dir, cache_name):
+    if not cache_dir:
+        cache_dir = os.getcwd()
 
-def read_cache(cache_name):
-    with open(f"{cache_name}.cache.json", "r") as infile:
+    cache_file = os.path.join(cache_dir, f"{cache_name}.cache.json")
+    return os.path.exists(cache_file)
+
+def read_cache(cache_dir, cache_name):
+    if not cache_dir:
+        cache_dir = os.getcwd()
+
+    cache_file = os.path.join(cache_dir, f"{cache_name}.cache.json")
+
+    with open(cache_file, "r") as infile:
         cache_entries = json.load(infile)
 
     return cache_entries
 
-def write_cache(cache_name, data):
-    with open(f"{cache_name}.cache.json", "w") as outfile:
+def write_cache(cache_dir, cache_name, data):
+    if not cache_dir:
+        cache_dir = os.getcwd()
+
+    cache_file = os.path.join(cache_dir, f"{cache_name}.cache.json")
+
+    with open(cache_file, "w") as outfile:
         json.dump(data, outfile, indent=4)
 
 def generate_periodical_ticks(timestamp_start, timestamp_end, period_seconds = 60*60*24*30, max_ticks = 25):
@@ -138,20 +153,37 @@ def get_bar_data(data_sorted):
 
     return list(bar_data.keys()), list(bar_data.values())
 
-def get_moving_mean(data_sorted, n=100):
-    moving_mean = []
+def weight_linear(n, index_shift):
+    if abs(index_shift * 2) > n:
+        return 0
+    return n - abs(index_shift * 2)
 
+
+def get_moving_mean(data_sorted, n, weight_callable):
+    moving_mean = []
+    divisor = 0
     for i in range(len(data_sorted)):
         views_accumulator = 0
         items_num = min(i + 1, n)
 
         for j in range(items_num):
-            item = data_sorted[i - j]
+            index_shift = j - items_num // 2            
+            # print(index_shift)
+            if i + index_shift >= len(data_sorted):
+                break
+            item = data_sorted[i + index_shift]
             views = item["views"]
             if views is None or views == 0:
                 continue
-            views_accumulator += views
-        views_average = views_accumulator / items_num
+
+            weight = 1 
+            if weight_callable:
+                weight *= weight_callable(n, index_shift)
+
+            views_accumulator += views * weight
+            divisor += weight
+
+        views_average = views_accumulator / divisor
 
         entry_clone = data_sorted[i].copy()
         entry_clone["views_avg"] = views_average
@@ -180,9 +212,11 @@ def add_vertical_lines():
 
         plt.text(x = vline_timestamp, y = (top - bot) / 2, s=text, rotation="vertical")
 
-def plot(data, title):
+def plot(data, title, moving_average_degree):
     xticks_fontsize = 8
     xticks_rotation = 25
+    marker_size_total = 4
+    marker_size_single = 2
 
     plt.figure(figsize=(20, 10))
 
@@ -215,18 +249,19 @@ def plot(data, title):
     plt.xlabel("Date")
     plt.ylabel('Views')
     plt.xticks(xticks_values, xticks_labels, rotation=xticks_rotation, fontsize=xticks_fontsize)
-    plt.plot(timestamps_values, views_total_values, linestyle='-', marker='o')
+    plt.plot(timestamps_values, views_total_values, linestyle='-', marker='o', markersize=marker_size_total)
     bot, top = plt.ylim()
     if bot > 0:
         plt.ylim(bottom = 0, top = top)
 
     add_vertical_lines()
 
-    moving_mean = get_moving_mean(data_sorted, len(data_sorted) // 10)
+    # moving_mean = get_moving_mean(data_sorted, len(data_sorted) // 10)
+    moving_mean = get_moving_mean(data_sorted, moving_average_degree, weight_linear)
     moving_mean_timestamps, moving_mean_value = dict_split(moving_mean, y_key="views_avg")
 
     plt.subplot(312)
-    plt.title("Views per video (moving average)")
+    plt.title(f"Views per video (moving average, N = {moving_average_degree})")
     plt.xlabel("Date")
     plt.ylabel('Views')
     plt.xticks(xticks_values, xticks_labels, rotation=xticks_rotation, fontsize=xticks_fontsize)
@@ -242,7 +277,7 @@ def plot(data, title):
     plt.xlabel("Date")
     plt.ylabel('Views')
     plt.xticks(xticks_values, xticks_labels, rotation=xticks_rotation, fontsize=xticks_fontsize)
-    plt.plot(timestamps_values, views_values, "bo", markersize=2)
+    plt.plot(timestamps_values, views_values, "bo", markersize=marker_size_single)
     # bot, top = plt.ylim()
     # if bot > 0:
     #     plt.ylim(bottom = 0, top = top)
@@ -271,9 +306,25 @@ def main():
     parser.add_argument("--from_cache", required = False, default=False, action="store_true")
     parser.add_argument("--username", required = False, type=str, default=None)
     parser.add_argument("--password", required = False, type=str, default=None)
+    parser.add_argument("--date_from", required = False, type=str, default=None)
+    parser.add_argument("--ma_degree", required = False, type=int, default=9)
+    parser.add_argument("--cache_dir", required = False, type=str, default="cache")
     parser.add_argument("channel", type=str)
 
     args = parser.parse_args()
+
+    cache_dir = args.cache_dir
+
+    date_from_str = args.date_from
+    if date_from_str:
+        date_from = datetime.datetime.strptime(date_from_str, '%d.%m.%Y')
+        date_from_seconds = date_from.timestamp()
+        print(f"Minimum timestamp set to {date_from_str}({date_from_seconds} seconds)")
+    else:
+        date_from = None
+        date_from_seconds = None
+
+    moving_average_degree = args.ma_degree
 
     credentials = None
     if args.username is not None:
@@ -287,7 +338,7 @@ def main():
         print("Reading from cache...")
         username = get_username_from_url(args.channel)
 
-        dataset = read_cache(username)
+        dataset = read_cache(cache_dir, username)
     else:
         print(f"Downloading video list from {args.channel}... ", end="")
         videos = get_video_list(args.channel, args.yt_dlp)
@@ -300,10 +351,10 @@ def main():
         username = get_username_from_url(args.channel)
 
         cached_dataset = None
-        if cache_exists(username):
-            cached_dataset = read_cache(username)
+        if cache_exists(cache_dir, username):
+            cached_dataset = read_cache(cache_dir, username)
 
-        with alive_bar(videos_num, title="Downloading metadata", theme="classic", force_tty=True) as bar:
+        with alive_bar(videos_num, title="Downloading metadata", theme="classic", force_tty=True, title_length=0) as bar:
             for video in videos:
                 cached_entry = find_by_url(cached_dataset, video)
                 if cached_entry is not None:
@@ -324,14 +375,21 @@ def main():
                         upload_date = datetime.datetime.strptime(upload_date_str, '%Y%m%d')
                         seconds = upload_date.timestamp()
 
+                        if date_from_seconds and seconds < date_from_seconds:
+                            print("Minimal timestamp reached")
+                            break
+
                         data_entry = {
                             "date" : seconds,
                             "views" : views_count,
                             "url" : video
                            }
+
                         dataset.append(data_entry)
 
-                        write_cache(uploader_id, dataset)
+                        write_cache(cache_dir, uploader_id, dataset)
+
+                        bar.title(f"{upload_date.strftime('%d.%m.%Y')}")
 
                         bar(1)
                     except Exception as ex:
@@ -339,7 +397,11 @@ def main():
         
     print("Done!")
 
-    plot(dataset, username)
+    plot_title = username
+    if date_from_seconds:
+        plot_title = f"{plot_title} (from {date_from_str})"
+
+    plot(dataset, plot_title, moving_average_degree)
 
     return 0 
 
