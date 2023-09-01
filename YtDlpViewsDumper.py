@@ -336,61 +336,27 @@ def fetch_metadata(video):
         print(f"Failed to get metadata for {video}: {ex}")
         return None
 
-async def main():
-    parser = argparse.ArgumentParser(
-        prog="Youtube Views dumper",
-        description="Collects information about video views using yt-dlp",
-        epilog="Delete it immideately!"
-    )
 
-    parser.add_argument("--yt_dlp", required = False, type=str, default="yt-dlp")
-    parser.add_argument("--from_cache", required = False, default=False, action="store_true")
-    parser.add_argument("--username", required = False, type=str, default=None)
-    parser.add_argument("--password", required = False, type=str, default=None)
-    parser.add_argument("--date_from", required = False, type=str, default=None)
-    parser.add_argument("--ma_degree", required = False, type=int, default=9)
-    parser.add_argument("--cache_dir", required = False, type=str, default="cache")
-    parser.add_argument("-j", "--jobs", required = False, type=int, default=32)
-    parser.add_argument("channel", type=str)
-
-    args = parser.parse_args()
-
-    cache_dir = args.cache_dir
-
-    date_from_str = args.date_from
-    if date_from_str:
-        date_from = datetime.datetime.strptime(date_from_str, '%d.%m.%Y')
-        date_from_seconds = date_from.timestamp()
-        print(f"Minimum timestamp set to {date_from_str}({date_from_seconds} seconds)")
-    else:
-        date_from = None
-        date_from_seconds = None
-
-    moving_average_degree = args.ma_degree
-
-    credentials = None
-    if args.username is not None:
-        credentials = (args.username, args.password)
-
+async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds, offline):
     dataset = []
 
-    username = get_username_from_url(args.channel)
+    username = get_username_from_url(channel)
 
-    if args.from_cache and cache_exists(username):
+    if offline and cache_exists(username):
         print("Reading from cache...")
-        username = get_username_from_url(args.channel)
+        username = get_username_from_url(channel)
 
         dataset = read_cache(cache_dir, username)
     else:
-        print(f"Downloading video list from {args.channel}... ", end="")
-        videos = get_video_list(args.channel, args.yt_dlp)
+        print(f"Downloading video list from {channel}... ", end="")
+        videos = get_video_list(channel, yt_dlp)
         print(" Done!")
 
         videos_num = len(videos)
         print(f"{videos_num} videos found!")
 
         print("Reading from cache and downloading...")
-        username = get_username_from_url(args.channel)
+        username = get_username_from_url(channel)
 
         cached_dataset = None
         if cache_exists(cache_dir, username):
@@ -408,7 +374,7 @@ async def main():
                     videos_to_load.append(video)
             
             futures = []
-            with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+            with ThreadPoolExecutor(max_workers=jobs) as executor:
                 for video in videos_to_load:
                     future = executor.submit(fetch_metadata, video)
                     futures.append(future)
@@ -452,14 +418,57 @@ async def main():
 
                     await asyncio.sleep(0.5)
 
-        
-    print("Done!")
+    print(f"Done for {channel}!")
+    return dataset, username
 
-    plot_title = username
-    if date_from_seconds:
-        plot_title = f"{plot_title} (from {date_from_str})"
 
-    plot(dataset, plot_title, moving_average_degree)
+async def main():
+    parser = argparse.ArgumentParser(
+        prog="Youtube Views dumper",
+        description="Collects information about video views using yt-dlp",
+        epilog="Delete it immideately!"
+    )
+
+    parser.add_argument("--yt_dlp", required = False, type=str, default="yt-dlp")
+    parser.add_argument("--from_cache", required = False, default=False, action="store_true")
+    parser.add_argument("--username", required = False, type=str, default=None)
+    parser.add_argument("--password", required = False, type=str, default=None)
+    parser.add_argument("--date_from", required = False, type=str, default=None)
+    parser.add_argument("--ma_degree", required = False, type=int, default=9)
+    parser.add_argument("--cache_dir", required = False, type=str, default="cache")
+    parser.add_argument("-j", "--jobs", required = False, type=int, default=32)
+    parser.add_argument("--channels", type=str, nargs="+")
+
+    args = parser.parse_args()
+
+    cache_dir = args.cache_dir
+
+    date_from_str = args.date_from
+    if date_from_str:
+        date_from = datetime.datetime.strptime(date_from_str, '%d.%m.%Y')
+        date_from_seconds = date_from.timestamp()
+        print(f"Minimum timestamp set to {date_from_str}({date_from_seconds} seconds)")
+    else:
+        date_from = None
+        date_from_seconds = None
+
+    moving_average_degree = args.ma_degree
+
+    credentials = None
+    if args.username is not None:
+        credentials = (args.username, args.password)
+
+    channel_data_dict = {}
+
+    for channel in args.channels:
+        dataset, username = await fetch_channel_data(channel, cache_dir, args.yt_dlp, args.jobs, date_from_seconds, args.from_cache)
+        channel_data_dict[channel] = (dataset, username)
+
+        plot_title = username
+        if date_from_seconds:
+            plot_title = f"{plot_title} (from {date_from_str})"
+
+        plot(dataset, plot_title, moving_average_degree)
 
     return 0 
 
