@@ -300,8 +300,11 @@ def plot(channel_data_dict: dict, title, date_from_seconds, moving_average_degre
     bot, top = plt.ylim()
     if bot > 0:
         plt.ylim(bottom = 0, top = top)
+
     if date_from_seconds and date_from_seconds > 0:
-        plt.xlim(left=date_from_seconds)
+        left, _ = plt.xlim()
+        if left < date_from_seconds:
+            plt.xlim(left=date_from_seconds)
 
     add_vertical_lines()
 
@@ -327,7 +330,9 @@ def plot(channel_data_dict: dict, title, date_from_seconds, moving_average_degre
     if bot > 0:
         plt.ylim(bottom = 0, top = top)
     if date_from_seconds and date_from_seconds > 0:
-        plt.xlim(left=date_from_seconds)
+        left, _ = plt.xlim()
+        if left < date_from_seconds:
+            plt.xlim(left=date_from_seconds)
 
     add_vertical_lines()
 
@@ -362,7 +367,9 @@ def plot(channel_data_dict: dict, title, date_from_seconds, moving_average_degre
     if moving_mean_separate:
         plt.legend()
         if date_from_seconds and date_from_seconds > 0:
-            plt.xlim(left=date_from_seconds)
+            left, _ = plt.xlim()
+            if left < date_from_seconds:
+                plt.xlim(left=date_from_seconds)
         add_vertical_lines()
 
     plt.tight_layout(h_pad=1)
