@@ -10,7 +10,7 @@ import yt_dlp
 import os
 import asyncio
 import concurrent
-from concurrent.futures import ThreadPoolExecutor, CancelledError, TimeoutError
+from concurrent.futures import ProcessPoolExecutor, CancelledError, TimeoutError
 import logging
 import shutil
 
@@ -575,7 +575,8 @@ async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds
     futures = []
 
     with (
-        ThreadPoolExecutor(max_workers=jobs) as executor,
+        # ThreadPoolExecutor(max_workers=jobs) as executor,
+        ProcessPoolExecutor(max_workers=jobs) as executor,
         alive_bar(videos_num, title="Downloading metadata", theme="classic", force_tty=True, title_length=0) as bar
         ):
         
@@ -609,12 +610,16 @@ async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds
 
                     if len(futures) > future_index:
                         cancel_futures = list(futures[future_index + 1:])
+                        marked_num = 0
                         cancelled_num = 0
                         for cancel_future in cancel_futures:
+                            if cancel_future.cancelled():
+                                continue
+                            marked_num += 1
                             cancelled = cancel_future.cancel()
                             if cancelled:
                                 cancelled_num += 1
-                        logger.debug(f"Marked {len(cancel_futures)} futures for cancelling, {cancelled_num} actually cancelled")
+                        logger.debug(f"Marked {marked_num} futures for cancelling, {cancelled_num} actually cancelled")
                     else:
                         logger.debug(f"No futures will be cancelled")
                     date_from_reached = True
