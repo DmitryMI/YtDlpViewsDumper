@@ -1,4 +1,5 @@
 import argparse
+from multiprocessing import process
 import subprocess
 import json
 from alive_progress import alive_bar
@@ -10,7 +11,7 @@ import yt_dlp
 import os
 import asyncio
 import concurrent
-from concurrent.futures import ProcessPoolExecutor, CancelledError, TimeoutError
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, CancelledError, TimeoutError
 import logging
 import shutil
 
@@ -24,15 +25,7 @@ YT_DLP_FLAGS = []
 milestone_list = []
 
 logger = logging.getLogger("main")
-
-ytdl_format_options = {
-            'quiet': True,
-            'no_warnings': True,
-            'default_search': 'auto',
-            'source_address': '0.0.0.0'
-        }
-
-ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
+yt_dlp_logger = logging.getLogger("yt-dlp")
 
 class CacheManager:
     def __init__(self, cache_dir_global, chunk_size=32):
@@ -129,9 +122,19 @@ class CacheManager:
             buffer.clear()
 
 
-def get_video_metadata(video, credentials = None, yt_dlp_path = "yt-dlp"):
-    
-    data = ytdl.extract_info(video, download=False)
+def get_video_metadata(video_url, credentials = None, yt_dlp_path = "yt-dlp"):
+    yt_dlp_params = {
+            'quiet': True,
+            'no_warnings': True,
+            'default_search': 'auto',
+            'source_address': '0.0.0.0',
+            "extract_flat": True,
+            "no-sponsorblock": True,
+            "logger": yt_dlp_logger
+        }
+
+    ytdl = yt_dlp.YoutubeDL(yt_dlp_params)
+    data = ytdl.extract_info(video_url, download=False, process=False)
     return data
 
 def get_darker_color(rgb_hex_str):
@@ -144,35 +147,35 @@ def get_darker_color(rgb_hex_str):
 
     return f"#{r:02X}{g:02X}{b:02X}"
 
+def get_video_list(channel, fast = False):
 
-def get_video_list(channel, yt_dlp_path = "yt-dlp"):
-
-    '''
-    ytdl_format_options = {
+    yt_dlp_params = {
             'quiet': True,
             'no_warnings': True,
             'default_search': 'auto',
-            'source_address': '0.0.0.0'
+            'source_address': '0.0.0.0',
+            "extract_flat": True,
+            "no-sponsorblock": True,
+            "logger": yt_dlp_logger,
+            "extractor_args": {'youtubetab': {'approximate_date': "a"}},
         }
+    
+    if fast:
+        logger.warning("Fast extraction enabled. Video metadata will be inaccurate")
+        yt_dlp_params["extractor_args"] = {'youtubetab': {'approximate_date': "a"}}
 
-    ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
-    data = ytdl.extract_info(channel, download=False, process=True)
-    return data
-    '''
+    ytdl = yt_dlp.YoutubeDL(yt_dlp_params)
+    data = ytdl.extract_info(channel, download=False)
+
+    videos = []
     
-    result_urls = []
-    cmd = [yt_dlp_path, "--flat-playlist", "--print", "url", "--no-sponsorblock", channel]
-    cmd += YT_DLP_FLAGS
-    logger.debug(" ".join(cmd))
-    result = subprocess.run(cmd, stdout=subprocess.PIPE)
-    result_text = result.stdout.decode()
-    urls = result_text.split('\n')
-    for url in urls:
-        url = url.strip()
-        if url != "":
-            result_urls.append(url)
-    return result_urls
-    
+    for entry in data["entries"]:
+        if entry["_type"] != "url":
+            logger.error("yt-dlp returned a hierarchy of playlists. If the target service is Youtube, specify the exact tab (videos, shorts or live) via the URL")
+            return None
+        videos.append(entry)
+        
+    return videos
 
 def get_id(url, yt_dlp_path = "yt-dlp"):
     cmd = [yt_dlp_path, "--flat-playlist", "--no-download", "--no-sponsorblock", "--print", "id", url]
@@ -180,19 +183,30 @@ def get_id(url, yt_dlp_path = "yt-dlp"):
     result_text = result.stdout.decode()
     return result_text
 
-def get_username_from_url(url):
-    parsed = urlparse(url)
-    path = parsed.path
-    path_segments =  path.split("/")
-    if "youtube" in parsed.hostname:
-        return path_segments[1]
-    elif "rutube" in parsed.hostname:
-        return path_segments[2]
-    elif "vk" in parsed.hostname:
-        return path_segments[2]
-    elif "dzen" in parsed.hostname:
-        return path_segments[1]
-    return None
+def get_username_from_url(url, fast=False):
+    if fast:
+        parsed = urlparse(url)
+        path = parsed.path
+        path_segments =  path.split("/")
+        if "youtube" in parsed.hostname:
+            return path_segments[1]
+        elif "rutube" in parsed.hostname:
+            return path_segments[2]
+        elif "vk" in parsed.hostname:
+            return path_segments[2]
+        elif "dzen" in parsed.hostname:
+            return path_segments[1]
+    
+    ytdl_params_local = {
+        'quiet': True,
+        'no_warnings': True,
+        'default_search': 'auto',
+        'source_address': '0.0.0.0'
+    }
+
+    ytdl = yt_dlp.YoutubeDL(ytdl_params_local)
+    data = ytdl.extract_info(url, download=False, process=False)
+    return data["channel"]
 
 def cache_exists(cache_dir, cache_name):
     if not cache_dir:
@@ -212,27 +226,6 @@ def get_cache_creation_time(cache_dir, cache_name):
 
     return os.path.getctime(cache_file)
 
-'''
-def read_cache(cache_dir, cache_name):
-    if not cache_dir:
-        cache_dir = os.getcwd()
-
-    cache_file = os.path.join(cache_dir, f"{cache_name}.cache.json")
-
-    with open(cache_file, "r") as infile:
-        cache_entries = json.load(infile)
-
-    return cache_entries
-
-def write_cache(cache_dir, cache_name, data):
-    if not cache_dir:
-        cache_dir = os.getcwd()
-
-    cache_file = os.path.join(cache_dir, f"{cache_name}.cache.json")
-
-    with open(cache_file, "w") as outfile:
-        json.dump(data, outfile, indent=4)
-'''
 
 def generate_periodical_ticks(timestamp_start, timestamp_end, period_seconds = 60*60*24*30, max_ticks = 25):
     xticks_values = []
@@ -343,7 +336,7 @@ def plot(channel_data_dict: dict, title, date_from_seconds, moving_average_degre
         total_plots = 2
 
     plt.figure(figsize=(20, 10))
-    plt.suptitle(f'Views of {title}')
+    plt.suptitle(title)
 
     timestamp_min = None
     timestamp_max = None
@@ -479,25 +472,41 @@ def find_by_url(dataset, url):
             return entry;
     return None
 
-def fetch_metadata(video):
+def fetch_metadata(video, fast = False):
     try:
-        metadata = get_video_metadata(video)
+        video_url = video["url"]
+    
+        views_count = None
+        timestamp = None
+        uploader_id = None 
+        
+        if "view_count" in video:
+            views_count = video["view_count"]
 
-        views_count = metadata["view_count"]                
-        upload_date_str = metadata["upload_date"]
+        if "timestamp" in video:
+            timestamp = video["timestamp"]
+        
+        if "uploader_id" in video:
+            uploader_id = video["uploader_id"]
+        
+        if not fast:
+            metadata = get_video_metadata(video_url)
+            views_count = metadata["view_count"]
+            upload_date_str = metadata["upload_date"]
 
-        if "uploader_id" in metadata:
+            if "uploader_id" in metadata:
+                uploader_id = metadata["uploader_id"]
+            else:
+                uploader_id = None
+
+            upload_date = datetime.strptime(upload_date_str, '%Y%m%d')
+            timestamp = upload_date.timestamp()
             uploader_id = metadata["uploader_id"]
-        else:
-            uploader_id = None
-
-        upload_date = datetime.strptime(upload_date_str, '%Y%m%d')
-        seconds = upload_date.timestamp()
-
+        
         data_entry = {
-            "date" : seconds,
+            "date" : timestamp,
             "views" : views_count,
-            "url" : video,
+            "url" : video_url,
             "uploader_id": uploader_id
            }
 
@@ -534,12 +543,12 @@ def remove_outdated_entries(cached_dataset, cache_manager, timestamp_current, us
     for entry in cache_outdated_entries:
         cached_dataset.remove(entry)
 
-async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds, cache_expiration_seconds, cache_manager, offline):
+async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds, cache_expiration_seconds, cache_manager, offline, fast):
     dataset = []
 
     timestamp_current = datetime.now().timestamp()
 
-    username = get_username_from_url(channel)
+    username = get_username_from_url(channel, False)
 
     if offline:
         if cache_exists(cache_dir, username):
@@ -551,7 +560,9 @@ async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds
     outdated_cache_num = 0
 
     logger.info(f"Downloading video list from {channel}...")
-    videos = get_video_list(channel, yt_dlp)
+    videos = get_video_list(channel, fast)
+    if not videos:
+        return None, username
 
     videos_num = len(videos)
     logger.info(f"{videos_num} videos found!")
@@ -575,15 +586,15 @@ async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds
     futures = []
 
     with (
-        # ThreadPoolExecutor(max_workers=jobs) as executor,
-        ProcessPoolExecutor(max_workers=jobs) as executor,
+        ThreadPoolExecutor(max_workers=jobs) as executor,
+        # ProcessPoolExecutor(max_workers=jobs) as executor,
         alive_bar(videos_num, title="Downloading metadata", theme="classic", force_tty=True, title_length=0) as bar
         ):
         
         for video in videos:
-            cached_entry = find_by_url(cached_dataset, video)
+            cached_entry = find_by_url(cached_dataset, video["url"])
             if cached_entry is None:
-                future = executor.submit(fetch_metadata, video)
+                future = executor.submit(fetch_metadata, video, fast)
                 futures.append(future)
             else:
                 bar(1, skipped=True)
@@ -667,6 +678,8 @@ async def main():
     )
 
     parser.add_argument("-v", "--verbosity", required = False, type=str, default="INFO")
+    parser.add_argument("-f", "--fast", required = False, action="store_true", default=False)
+    parser.add_argument("--yt_dlp_verbosity", required = False, type=str, default=None)
     parser.add_argument("--yt_dlp", required = False, type=str, default="yt-dlp")
     parser.add_argument("--cache_expiration", required = False, default=30)
     parser.add_argument("--offline", required = False, default=False, action="store_true")
@@ -680,11 +693,17 @@ async def main():
     parser.add_argument("--channels", type=str, nargs="+")
     parser.add_argument("--milestone", type=str, nargs="+")
     parser.add_argument("--milestone_file", required=False, type=str)
+    parser.add_argument("--yt_dlp_config", type=str)
 
     args = parser.parse_args()
     
     logging.basicConfig(format=LOG_FORMAT)    
     logger.setLevel(args.verbosity)
+    
+    if args.yt_dlp_verbosity is None:
+        yt_dlp_logger.setLevel(args.verbosity)
+    else:
+        yt_dlp_logger.setLevel(args.yt_dlp_verbosity)
     
     load_vertical_lines(args)
 
@@ -712,9 +731,14 @@ async def main():
     usernames = []
 
     for channel in args.channels:
-        dataset, username = await fetch_channel_data(channel, cache_dir, args.yt_dlp, args.jobs, date_from_seconds, cache_expiration_seconds, cache_manager, args.offline)
+        dataset, username = await fetch_channel_data(channel, cache_dir, args.yt_dlp, args.jobs, date_from_seconds, cache_expiration_seconds, cache_manager, args.offline, args.fast)
+        if not dataset:
+            continue
         channel_data_dict[channel] = (dataset, username)
         usernames.append(username)
+        
+    if not channel_data_dict:
+        return 0
 
     plot_title = "Views of " + ", ".join(usernames)
     if date_from_seconds:
