@@ -1,20 +1,16 @@
 import argparse
-from genericpath import isdir
 import subprocess
 import json
-from unittest import skip
 from alive_progress import alive_bar
 import matplotlib.pyplot as plt
 from urllib.parse import urlparse
 import os.path
-# import datetime
 from datetime import datetime
 import yt_dlp
 import os
 import asyncio
 import concurrent
-from concurrent.futures import ThreadPoolExecutor
-import atexit
+from concurrent.futures import ThreadPoolExecutor, CancelledError
 import logging
 import shutil
 
@@ -587,13 +583,14 @@ async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds
                 bar(1, skipped=True)
         
         futures = []
+
         with ThreadPoolExecutor(max_workers=jobs) as executor:
 
             for video in videos_to_load:
                 future = executor.submit(fetch_metadata, video)
                 futures.append(future)
-                
-            while futures:
+            date_from_reached = False    
+            while futures and not date_from_reached:
                 concurrent.futures.wait(futures, timeout=None, return_when="FIRST_COMPLETED")
                 done_futures = concurrent.futures.as_completed(futures, timeout=None)
 
@@ -608,21 +605,26 @@ async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds
                         upload_date_seconds = metadata["date"]
                         upload_date = datetime.fromtimestamp(upload_date_seconds)
 
-                        if date_from_seconds and upload_date_seconds < date_from_seconds:
-                            logger.info("Minimum timestamp reached")
+                        if date_from_seconds and upload_date_seconds < date_from_seconds and not date_from_reached:
+                            logger.info("Minimum timestamp reached, aborting remaining scheduled downloads...")
                             future_index = futures.index(future)
 
                             if len(futures) > future_index:
-                                discarded_futures = futures[future_index + 1 : -1]
-                                for i, discard_future in enumerate(discarded_futures):
+                                discard_futures = futures[future_index + 1:]
+                                for discard_future in discard_futures:
                                     discard_future.cancel()
+                            date_from_reached = True
+                            
+                        bar.title(upload_date.strftime("%d.%m.%Y"))
+                        bar(1)
+                        
+                    except CancelledError as err:
+                        # bar(1, skipped = True)
+                        pass
                     except Exception as err:
                         logger.error(f"Downloading error: {err}")
                         
                     futures.remove(future)
-
-                    bar.title(upload_date.strftime("%d.%m.%Y"))
-                    bar(1)
 
     logger.info(f"Done for {channel}!")
     cache_manager.flush_buffers()
