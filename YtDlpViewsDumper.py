@@ -543,6 +543,7 @@ def load_vertical_lines(args):
         date_str = milestone_line[:first_space_index]
         date = datetime.strptime(date_str, '%d.%m.%Y')
         text = milestone_line[first_space_index + 1:]
+        text = text.strip()
         logger.info(f"Loaded vertical line: {date.strftime('%d.%m.%Y')} - {text}")
         milestone_list.append((date_str, text))
 
