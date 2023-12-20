@@ -10,7 +10,7 @@ import yt_dlp
 import os
 import asyncio
 import concurrent
-from concurrent.futures import ThreadPoolExecutor, CancelledError
+from concurrent.futures import ThreadPoolExecutor, CancelledError, TimeoutError
 import logging
 import shutil
 
@@ -104,7 +104,7 @@ class CacheManager:
             if not buffer:
                 continue
             
-            logger.debug(f"Flushing {len(buffer)} buffered records for cache {cache_name}")            
+            # logger.debug(f"Flushing {len(buffer)} buffered records for cache {cache_name}")            
             cache_dir = self.get_cache_dir_local(cache_name)
             chunk_names = os.listdir(cache_dir)
             chunk_max = None
@@ -114,7 +114,7 @@ class CacheManager:
                 if chunk_max is None or chunk_max < chunk_num:
                     chunk_max = chunk_num
                     
-            logger.debug(f"Max existing chunk number for {cache_name}: {chunk_max}")
+            # logger.debug(f"Max existing chunk number for {cache_name}: {chunk_max}")
             if chunk_max is None:
                 chunk_num_current = 0
             else:
@@ -572,59 +572,58 @@ async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds
 
     dataset += cached_dataset
 
-    with alive_bar(videos_num, title="Downloading metadata", theme="classic", force_tty=True, title_length=0) as bar:
-        videos_to_load = []
+    futures = []
+
+    with (
+        ThreadPoolExecutor(max_workers=jobs) as executor,
+        alive_bar(videos_num, title="Downloading metadata", theme="classic", force_tty=True, title_length=0) as bar
+        ):
         
         for video in videos:
             cached_entry = find_by_url(cached_dataset, video)
             if cached_entry is None:
-                videos_to_load.append(video)
-            else:
-                bar(1, skipped=True)
-        
-        futures = []
-
-        with ThreadPoolExecutor(max_workers=jobs) as executor:
-
-            for video in videos_to_load:
                 future = executor.submit(fetch_metadata, video)
                 futures.append(future)
-            date_from_reached = False    
-            while futures and not date_from_reached:
-                concurrent.futures.wait(futures, timeout=None, return_when="FIRST_COMPLETED")
-                done_futures = concurrent.futures.as_completed(futures, timeout=None)
+            else:
+                bar(1, skipped=True)
 
-                for future in done_futures:
-                    try:
-                        metadata = future.result()
-                        metadata["cache_timestamp"] = datetime.now().timestamp()
-                        dataset.append(metadata)
-                        # write_cache(cache_dir, username, dataset)
-                        cache_manager.append(username, metadata)
-                    
-                        upload_date_seconds = metadata["date"]
-                        upload_date = datetime.fromtimestamp(upload_date_seconds)
+        date_from_reached = False    
 
-                        if date_from_seconds and upload_date_seconds < date_from_seconds and not date_from_reached:
-                            logger.info("Minimum timestamp reached, aborting remaining scheduled downloads...")
-                            future_index = futures.index(future)
+        for future in concurrent.futures.as_completed(futures, timeout=None):
+            try:
+                metadata = future.result()
+                metadata["cache_timestamp"] = datetime.now().timestamp()
+                dataset.append(metadata)
+                # write_cache(cache_dir, username, dataset)
+                cache_manager.append(username, metadata)
+        
+                upload_date_seconds = metadata["date"]
+                upload_date = datetime.fromtimestamp(upload_date_seconds)
+                bar.title(upload_date.strftime("%d.%m.%Y"))
+                bar(1)
 
-                            if len(futures) > future_index:
-                                discard_futures = futures[future_index + 1:]
-                                for discard_future in discard_futures:
-                                    discard_future.cancel()
-                            date_from_reached = True
-                            
-                        bar.title(upload_date.strftime("%d.%m.%Y"))
-                        bar(1)
-                        
-                    except CancelledError as err:
-                        # bar(1, skipped = True)
-                        pass
-                    except Exception as err:
-                        logger.error(f"Downloading error: {err}")
-                        
-                    futures.remove(future)
+                if date_from_seconds and upload_date_seconds < date_from_seconds:
+                    if not date_from_reached:
+                        logger.info("Minimum timestamp reached, aborting remaining downloads...")
+                    future_index = futures.index(future)
+
+                    if len(futures) > future_index:
+                        cancel_futures = list(futures[future_index + 1:])
+                        cancelled_num = 0
+                        for cancel_future in cancel_futures:
+                            cancelled = cancel_future.cancel()
+                            if cancelled:
+                                cancelled_num += 1
+                        logger.debug(f"Marked {len(cancel_futures)} futures for cancelling, {cancelled_num} actually cancelled")
+                    else:
+                        logger.debug(f"No futures will be cancelled")
+                    date_from_reached = True
+                
+            except CancelledError as err:
+                # bar(1, skipped = True)
+                pass
+            except Exception as err:
+                logger.error(f"Downloading error: {err}")
 
     logger.info(f"Done for {channel}!")
     cache_manager.flush_buffers()
