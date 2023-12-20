@@ -12,17 +12,30 @@ import os
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import atexit
+import logging
 
+LOG_FORMAT = "%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s"
 
 SECONDS_IN_MONTH = 60*60*24*30
 
 YT_DLP_FLAGS = []
 
+'''
 VLINE_DATES = [
     ("24.02.2022", "War"),
     ("21.09.2022", "Mobilization"),
     ("24.06.2023", "Prigozhin coup"),
     ("23.08.2023", "Prigozhin death")]
+'''
+
+VLINE_DATES = [
+    ("13.09.2023", "iPhone 15"),
+    ("07.09.2022", "iPhone 14"),
+    ("14.09.2021", "iPhone 13"),
+    ("13.10.2020", "iPhone 12"),
+]
+
+logger = logging.getLogger("main")
 
 ytdl_format_options = {
             'quiet': True,
@@ -33,7 +46,6 @@ ytdl_format_options = {
 
 ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
 
-thread_executor = ThreadPoolExecutor(32)
 
 def get_video_metadata(video, credentials = None, yt_dlp_path = "yt-dlp"):
     
@@ -69,7 +81,7 @@ def get_video_list(channel, yt_dlp_path = "yt-dlp"):
     result_urls = []
     cmd = [yt_dlp_path, "--flat-playlist", "--print", "url", "--no-sponsorblock", channel]
     cmd += YT_DLP_FLAGS
-    print(" ".join(cmd))
+    logger.debug(" ".join(cmd))
     result = subprocess.run(cmd, stdout=subprocess.PIPE)
     result_text = result.stdout.decode()
     urls = result_text.split('\n')
@@ -408,7 +420,7 @@ def fetch_metadata(video):
         return data_entry
 
     except Exception as ex:
-        print(f"Failed to get metadata for {video}: {ex}")
+        logger.error(f"Failed to get metadata for {video}: {ex}")
         return None
 
 
@@ -420,21 +432,21 @@ async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds
     username = get_username_from_url(channel)
 
     if offline and cache_exists(cache_dir, username):
-        print("Reading from cache...")
+        logger.info("Reading from cache...")
         username = get_username_from_url(channel)
 
         dataset = read_cache(cache_dir, username)
     else:
         outdated_cache_num = 0
 
-        print(f"Downloading video list from {channel}... ", end="")
+        logger.info(f"Downloading video list from {channel}...")
         videos = get_video_list(channel, yt_dlp)
-        print(" Done!")
+        logger.info("Done!")
 
         videos_num = len(videos)
-        print(f"{videos_num} videos found!")
+        logger.info(f"{videos_num} videos found!")
 
-        print("Reading from cache and downloading...")
+        logger.info("Reading from cache and downloading...")
         username = get_username_from_url(channel)
 
         cached_dataset = None
@@ -468,7 +480,7 @@ async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds
                     videos_to_load.append(video)
             
             if outdated_cache_num > 0:
-                print(f"{outdated_cache_num} cache entries were outdated")
+                logger.info(f"{outdated_cache_num} cache entries were outdated")
 
             futures = []
             with ThreadPoolExecutor(max_workers=jobs) as executor:
@@ -500,7 +512,7 @@ async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds
                             upload_date = datetime.datetime.fromtimestamp(upload_date_seconds)
 
                             if date_from_seconds and upload_date_seconds < date_from_seconds:
-                                print("Minimum timestamp reached")
+                                logger.info("Minimum timestamp reached")
                                 future_index = futures.index(future)
 
                                 if len(futures) > future_index:
@@ -518,8 +530,18 @@ async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds
 
                     await asyncio.sleep(0.25)
 
-    print(f"Done for {channel}!")
+    logger.info(f"Done for {channel}!")
     return dataset, username
+
+
+def load_vertical_lines(args):
+    for milestone in args.milestones:
+        pass
+    
+    if args.milestone_file:
+        if not os.path.isfile(args.milestone_file):
+            pass
+    pass
 
 
 async def main():
@@ -540,8 +562,12 @@ async def main():
     parser.add_argument("--cache_dir", required = False, type=str, default="cache")
     parser.add_argument("-j", "--jobs", required = False, type=int, default=64)
     parser.add_argument("--channels", type=str, nargs="+")
+    parser.add_argument("--milestone", type=str, nargs="+")
+    parser.add_argument("--milestone_file", required=False, type=str)
 
     args = parser.parse_args()
+    
+    load_vertical_lines(args)
 
     cache_dir = args.cache_dir
     cache_expiration_seconds = args.cache_expiration * 24 * 60 * 60
@@ -550,7 +576,7 @@ async def main():
     if date_from_str:
         date_from = datetime.datetime.strptime(date_from_str, '%d.%m.%Y')
         date_from_seconds = date_from.timestamp()
-        print(f"Minimum timestamp set to {date_from_str}({date_from_seconds} seconds)")
+        logger.info(f"Minimum timestamp set to {date_from_str}({date_from_seconds} seconds)")
     else:
         date_from = None
         date_from_seconds = None
