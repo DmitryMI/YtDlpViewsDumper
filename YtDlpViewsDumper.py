@@ -16,7 +16,7 @@ import logging
 import shutil
 
 
-LOG_FORMAT = "%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s"
+LOG_FORMAT = "%(asctime)s [%(name)-8.8s] [%(funcName)-24.24s] [%(levelname)-5.5s]  %(message)s"
 
 SECONDS_IN_MONTH = 60*60*24*30
 
@@ -575,6 +575,9 @@ async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds
     else:
         logger.info(f"Cache {username} does not exist or is empty.")
     
+    if fast:
+        logger.warning(f"Fast mode enabled, metadata will not be saved to cache")
+    
     remove_outdated_entries(cached_dataset, cache_manager, timestamp_current, username, cache_expiration_seconds)
     logger.info(f"Rewriting cache {username} with outdated elements removed...")
     cache_manager.clear_cache(username)
@@ -586,8 +589,8 @@ async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds
     futures = []
 
     with (
-        ThreadPoolExecutor(max_workers=jobs) as executor,
-        # ProcessPoolExecutor(max_workers=jobs) as executor,
+        # ThreadPoolExecutor(max_workers=jobs) as executor,
+        ProcessPoolExecutor(max_workers=jobs) as executor,
         alive_bar(videos_num, title="Downloading metadata", theme="classic", force_tty=True, title_length=0) as bar
         ):
         
@@ -607,7 +610,8 @@ async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds
                 metadata["cache_timestamp"] = datetime.now().timestamp()
                 dataset.append(metadata)
                 # write_cache(cache_dir, username, dataset)
-                cache_manager.append(username, metadata)
+                if not fast:
+                    cache_manager.append(username, metadata)
         
                 upload_date_seconds = metadata["date"]
                 upload_date = datetime.fromtimestamp(upload_date_seconds)
@@ -642,7 +646,8 @@ async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds
                 logger.error(f"Downloading error: {err}")
 
     logger.info(f"Done for {channel}!")
-    cache_manager.flush_buffers()
+    if not fast:
+        cache_manager.flush_buffers()
     return dataset, username
 
 
@@ -689,7 +694,7 @@ async def main():
     parser.add_argument("--ma_degree", required = False, type=int, default=9)
     parser.add_argument("--ma_separate", required = False, action="store_true")
     parser.add_argument("--cache_dir", required = False, type=str, default="cache")
-    parser.add_argument("-j", "--jobs", required = False, type=int, default=64)
+    parser.add_argument("-j", "--jobs", required = False, type=int, default=32)
     parser.add_argument("--channels", type=str, nargs="+")
     parser.add_argument("--milestone", type=str, nargs="+")
     parser.add_argument("--milestone_file", required=False, type=str)
