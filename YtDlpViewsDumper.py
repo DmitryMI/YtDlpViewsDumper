@@ -6,7 +6,8 @@ from alive_progress import alive_bar
 import matplotlib.pyplot as plt
 from urllib.parse import urlparse
 import os.path
-import datetime
+# import datetime
+from datetime import datetime
 import yt_dlp
 import os
 import asyncio
@@ -14,26 +15,14 @@ from concurrent.futures import ThreadPoolExecutor
 import atexit
 import logging
 
+
 LOG_FORMAT = "%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s"
 
 SECONDS_IN_MONTH = 60*60*24*30
 
 YT_DLP_FLAGS = []
 
-'''
-VLINE_DATES = [
-    ("24.02.2022", "War"),
-    ("21.09.2022", "Mobilization"),
-    ("24.06.2023", "Prigozhin coup"),
-    ("23.08.2023", "Prigozhin death")]
-'''
-
-VLINE_DATES = [
-    ("13.09.2023", "iPhone 15"),
-    ("07.09.2022", "iPhone 14"),
-    ("14.09.2021", "iPhone 13"),
-    ("13.10.2020", "iPhone 12"),
-]
+milestone_list = []
 
 logger = logging.getLogger("main")
 
@@ -163,14 +152,14 @@ def generate_periodical_ticks(timestamp_start, timestamp_end, period_seconds = 6
     while timestamp < timestamp_end:
         xticks_values.append(timestamp)
 
-        dt_object = datetime.datetime.fromtimestamp(timestamp)
+        dt_object = datetime.fromtimestamp(timestamp)
         date_str = dt_object.strftime("%d.%m.%Y")
         xticks_labels.append(date_str)
         timestamp += period_seconds
 
     if timestamp_end not in xticks_values:
         xticks_values.append(timestamp_end)
-        dt_object = datetime.datetime.fromtimestamp(timestamp)
+        dt_object = datetime.fromtimestamp(timestamp)
         date_str = dt_object.strftime("%d.%m.%Y")
         xticks_labels.append(date_str)
 
@@ -239,8 +228,8 @@ def dict_split(data_sorted, x_key = "date", y_key = "views"):
     return x_list, y_list
 
 def add_vertical_lines():
-    for date, text in VLINE_DATES:
-        vline_datetime = datetime.datetime.strptime(date, '%d.%m.%Y')
+    for date, text in milestone_list:
+        vline_datetime = datetime.strptime(date, '%d.%m.%Y')
         vline_timestamp = vline_datetime.timestamp()
         plt.axvline(x = vline_timestamp, color = 'r', label = date, linestyle="--")
 
@@ -304,6 +293,7 @@ def plot(channel_data_dict: dict, title, date_from_seconds, moving_average_degre
             timestamps_values.append(timestamp)
             views_values.append(views)
             views_total_values.append(views_total_counter)
+
 
         plt.plot(timestamps_values, views_total_values, linestyle='-', marker='o', markersize=marker_size_total, label=username)
 
@@ -407,7 +397,7 @@ def fetch_metadata(video):
         else:
             uploader_id = None
 
-        upload_date = datetime.datetime.strptime(upload_date_str, '%Y%m%d')
+        upload_date = datetime.strptime(upload_date_str, '%Y%m%d')
         seconds = upload_date.timestamp()
 
         data_entry = {
@@ -427,7 +417,7 @@ def fetch_metadata(video):
 async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds, cache_expiration_seconds, offline):
     dataset = []
 
-    timestamp_current = datetime.datetime.now().timestamp()
+    timestamp_current = datetime.now().timestamp()
 
     username = get_username_from_url(channel)
 
@@ -504,12 +494,12 @@ async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds
                     for future in done_futures:
                         metadata = future.result()
                         if metadata:
-                            metadata["cache_timestamp"] = datetime.datetime.now().timestamp()
+                            metadata["cache_timestamp"] = datetime.now().timestamp()
                             dataset.append(metadata)
                             write_cache(cache_dir, username, dataset)
                         
                             upload_date_seconds = metadata["date"]
-                            upload_date = datetime.datetime.fromtimestamp(upload_date_seconds)
+                            upload_date = datetime.fromtimestamp(upload_date_seconds)
 
                             if date_from_seconds and upload_date_seconds < date_from_seconds:
                                 logger.info("Minimum timestamp reached")
@@ -535,13 +525,26 @@ async def fetch_channel_data(channel, cache_dir, yt_dlp, jobs, date_from_seconds
 
 
 def load_vertical_lines(args):
-    for milestone in args.milestones:
-        pass
+    milestone_lines = []
+    if args.milestone:
+        for milestone in args.milestone:
+            milestone_lines.append(milestone)
     
     if args.milestone_file:
         if not os.path.isfile(args.milestone_file):
-            pass
-    pass
+            logger.error(f"File {args.milestone_file} does not exist or is not a file!")
+            quit(-1)
+            
+        with open(args.milestone_file) as fin:
+            milestone_lines += fin.readlines()
+        
+    for milestone_line in milestone_lines:
+        first_space_index = milestone_line.index(" ")
+        date_str = milestone_line[:first_space_index]
+        date = datetime.strptime(date_str, '%d.%m.%Y')
+        text = milestone_line[first_space_index + 1:]
+        logger.info(f"Loaded vertical line: {date.strftime('%d.%m.%Y')} - {text}")
+        milestone_list.append((date_str, text))
 
 
 async def main():
@@ -551,6 +554,7 @@ async def main():
         epilog="Delete it immideately!"
     )
 
+    parser.add_argument("-v", "--verbosity", required = False, type=str, default="INFO")
     parser.add_argument("--yt_dlp", required = False, type=str, default="yt-dlp")
     parser.add_argument("--cache_expiration", required = False, default=30)
     parser.add_argument("--offline", required = False, default=False, action="store_true")
@@ -567,6 +571,9 @@ async def main():
 
     args = parser.parse_args()
     
+    logging.basicConfig(format=LOG_FORMAT)    
+    logger.setLevel(args.verbosity)
+    
     load_vertical_lines(args)
 
     cache_dir = args.cache_dir
@@ -574,7 +581,7 @@ async def main():
 
     date_from_str = args.date_from
     if date_from_str:
-        date_from = datetime.datetime.strptime(date_from_str, '%d.%m.%Y')
+        date_from = datetime.strptime(date_from_str, '%d.%m.%Y')
         date_from_seconds = date_from.timestamp()
         logger.info(f"Minimum timestamp set to {date_from_str}({date_from_seconds} seconds)")
     else:
