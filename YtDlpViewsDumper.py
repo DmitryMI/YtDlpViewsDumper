@@ -1,22 +1,17 @@
 import argparse
-from multiprocessing import process
-import subprocess
-import json
-from alive_progress import alive_bar
-import matplotlib.pyplot as plt
-from urllib.parse import urlparse
-import os.path
-from datetime import datetime
-import yt_dlp
-import os
-import asyncio
 import concurrent
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, CancelledError, TimeoutError
-import logging
-import shutil
 import getpass
+import logging
+import os
+import os.path
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, CancelledError
+from datetime import datetime
+
+import matplotlib.pyplot as plt
+from alive_progress import alive_bar
 
 from cache_manager import CacheManager
+from grabber import Grabber, VideoInfo, Credentials
 
 LOG_FORMAT = "%(asctime)s [%(name)-8.8s] [%(funcName)-24.24s] [%(levelname)-5.5s]  %(message)s"
 
@@ -30,25 +25,6 @@ logger = logging.getLogger("main")
 yt_dlp_logger = logging.getLogger("yt-dlp")
 
 
-def get_video_metadata(video_url, credentials=None, yt_dlp_path="yt-dlp"):
-    yt_dlp_params = {
-        'quiet': True,
-        'no_warnings': True,
-        'default_search': 'auto',
-        'source_address': '0.0.0.0',
-        "extract_flat": True,
-        "no-sponsorblock": True,
-        "logger": yt_dlp_logger,
-    }
-    if credentials is not None:
-        yt_dlp_params["username"] = credentials[0]
-        yt_dlp_params["password"] = credentials[1]
-
-    ytdl = yt_dlp.YoutubeDL(yt_dlp_params)
-    data = ytdl.extract_info(video_url, download=False, process=False)
-    return data
-
-
 def get_darker_color(rgb_hex_str):
     if rgb_hex_str[0] == "#":
         rgb_hex_str = rgb_hex_str[1:]
@@ -58,93 +34,6 @@ def get_darker_color(rgb_hex_str):
     b = round(int(rgb_hex_str[4:6], 16) * 0.75)
 
     return f"#{r:02X}{g:02X}{b:02X}"
-
-
-def get_video_list(channel, credentials, fast=False):
-    yt_dlp_params = {
-        'quiet': True,
-        'no_warnings': True,
-        'default_search': 'auto',
-        'source_address': '0.0.0.0',
-        "extract_flat": True,
-        "no-sponsorblock": True,
-        "logger": yt_dlp_logger,
-        "extractor_args": {'youtubetab': {'approximate_date': "a"}},
-        "ignoreerrors": True
-    }
-
-    if credentials is not None:
-        yt_dlp_params["username"] = credentials[0]
-        yt_dlp_params["password"] = credentials[1]
-
-    if fast:
-        logger.warning("Fast extraction enabled. Video metadata will be inaccurate")
-        yt_dlp_params["extractor_args"] = {'youtubetab': {'approximate_date': "a"}}
-
-    ytdl = yt_dlp.YoutubeDL(yt_dlp_params)
-    data = ytdl.extract_info(channel, download=False)
-
-    videos = []
-
-    for entry in data["entries"]:
-        if entry is None:
-            logger.error("Entry is None!")
-            continue
-        if entry["_type"] != "url":
-            logger.error(
-                "yt-dlp returned a hierarchy of playlists. If the target service is Youtube, specify the exact tab (videos, shorts or live) via the URL")
-            return None
-        videos.append(entry)
-
-    return videos
-
-
-def get_id(url, yt_dlp_path="yt-dlp"):
-    cmd = [yt_dlp_path, "--flat-playlist", "--no-download", "--no-sponsorblock", "--print", "id", url]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE)
-    result_text = result.stdout.decode()
-    return result_text
-
-
-def get_username_from_url(url, credentials, fast=False):
-    if fast:
-        parsed = urlparse(url)
-        path = parsed.path
-        path_segments = path.split("/")
-        if "youtube" in parsed.hostname:
-            return path_segments[1]
-        elif "rutube" in parsed.hostname:
-            return path_segments[2]
-        elif "vk" in parsed.hostname:
-            return path_segments[2]
-        elif "dzen" in parsed.hostname:
-            return path_segments[1]
-
-    yt_dlp_params = {
-        'quiet': True,
-        'no_warnings': True,
-        'default_search': 'auto',
-        'source_address': '0.0.0.0'
-    }
-
-    if credentials is not None:
-        yt_dlp_params["username"] = credentials[0]
-        yt_dlp_params["password"] = credentials[1]
-
-    ytdl = yt_dlp.YoutubeDL(yt_dlp_params)
-    data = ytdl.extract_info(url, download=False, process=False)
-    if "channel" in data:
-        return data["channel"]
-    elif "id" in data:
-        return data["id"]
-
-
-def cache_exists(cache_dir, cache_name):
-    if not cache_dir:
-        cache_dir = os.getcwd()
-
-    cache_file = os.path.join(cache_dir, f"{cache_name}.cache.json")
-    return os.path.exists(cache_file)
 
 
 def get_cache_creation_time(cache_dir, cache_name):
@@ -205,20 +94,20 @@ def weight_linear(n, index_shift):
     return n - abs(index_shift * 2)
 
 
-def get_moving_mean(data_sorted, n, weight_callable):
+def get_moving_mean(video_infos_sorted: list[VideoInfo], n, weight_callable):
     moving_mean = []
 
-    for i in range(len(data_sorted)):
+    for i in range(len(video_infos_sorted)):
         views_accumulator = 0
         items_num = min(i + 1, n)
         divisor = 0
         for j in range(items_num):
             index_shift = j - items_num // 2
             # print(index_shift)
-            if i + index_shift >= len(data_sorted):
+            if i + index_shift >= len(video_infos_sorted):
                 break
-            item = data_sorted[i + index_shift]
-            views = item["views"]
+            video_info = video_infos_sorted[i + index_shift]
+            views = video_info.view_count
             if views is None or views == 0:
                 continue
 
@@ -231,14 +120,13 @@ def get_moving_mean(data_sorted, n, weight_callable):
 
         views_average = views_accumulator / divisor
 
-        entry_clone = data_sorted[i].copy()
-        entry_clone["views_avg"] = views_average
-        moving_mean.append(entry_clone)
+        mean_entry = {"timestamp": video_infos_sorted[i].timestamp, "views_avg": views_average}
+        moving_mean.append(mean_entry)
 
     return moving_mean
 
 
-def dict_split(data_sorted, x_key="date", y_key="views"):
+def dict_split(data_sorted, x_key="timestamp", y_key="views"):
     x_list = []
     y_list = []
     for entry in data_sorted:
@@ -261,7 +149,8 @@ def add_vertical_lines():
         plt.text(x=vline_timestamp, y=(top - bot) / 2, s=text, rotation="vertical")
 
 
-def plot(channel_data_dict: dict, title, date_from_seconds, moving_average_degree, moving_mean_separate=False):
+def plot(channel_data_dict: dict[Grabber, list[VideoInfo]], title, date_from_seconds, moving_average_degree,
+         moving_mean_separate=False):
     xticks_fontsize = 8
     xticks_rotation = 25
     marker_size_total = 4
@@ -278,11 +167,11 @@ def plot(channel_data_dict: dict, title, date_from_seconds, moving_average_degre
     timestamp_min = None
     timestamp_max = None
 
-    for channel, (data, username) in channel_data_dict.items():
-        data_sorted = sorted(data, key=lambda x: x["date"])
-        channel_data_dict[channel] = (data, username, data_sorted)
+    for grabber, video_info_list in channel_data_dict.items():
+        video_infos_sorted = sorted(video_info_list, key=lambda video_info: video_info.timestamp)
+        channel_data_dict[grabber] = video_infos_sorted
 
-        timestamp_min_local, timestamp_max_local = data_sorted[0]["date"], data_sorted[-1]["date"]
+        timestamp_min_local, timestamp_max_local = video_infos_sorted[0].timestamp, video_infos_sorted[-1].timestamp
 
         if not timestamp_min or timestamp_min_local < timestamp_min:
             timestamp_min = timestamp_min_local
@@ -298,16 +187,16 @@ def plot(channel_data_dict: dict, title, date_from_seconds, moving_average_degre
     xticks_values, xticks_labels = generate_periodical_ticks(timestamp_min, timestamp_max)
     plt.xticks(xticks_values, xticks_labels, rotation=xticks_rotation, fontsize=xticks_fontsize)
 
-    for channel, (data, username, data_sorted) in channel_data_dict.items():
+    for grabber, video_infos_sorted in channel_data_dict.items():
         timestamps_values = []
         views_values = []
         views_total_values = []
 
         views_total_counter = 0
 
-        for entry in data_sorted:
-            timestamp = entry["date"]
-            views = entry["views"]
+        for video_info in video_infos_sorted:
+            timestamp = video_info.timestamp
+            views = video_info.view_count
             if views is None or views <= 0:
                 continue
 
@@ -318,7 +207,7 @@ def plot(channel_data_dict: dict, title, date_from_seconds, moving_average_degre
             views_total_values.append(views_total_counter)
 
         plt.plot(timestamps_values, views_total_values, linestyle='-', marker='o', markersize=marker_size_total,
-                 label=username)
+                 label=grabber.get_channel_name())
 
     plt.legend()
 
@@ -341,10 +230,10 @@ def plot(channel_data_dict: dict, title, date_from_seconds, moving_average_degre
 
     line_colors = []
 
-    for channel, (data, username, data_sorted) in channel_data_dict.items():
-        moving_mean = get_moving_mean(data_sorted, moving_average_degree, weight_linear)
+    for grabber, video_infos_sorted in channel_data_dict.items():
+        moving_mean = get_moving_mean(video_infos_sorted, moving_average_degree, weight_linear)
         moving_mean_timestamps, moving_mean_value = dict_split(moving_mean, y_key="views_avg")
-        line = plt.plot(moving_mean_timestamps, moving_mean_value, linestyle='-', label=username + " (moving average)")
+        line = plt.plot(moving_mean_timestamps, moving_mean_value, linestyle='-', label=grabber.get_channel_name() + " (moving average)")
         if line:
             line_colors.append(line[0]._color)
 
@@ -367,26 +256,27 @@ def plot(channel_data_dict: dict, title, date_from_seconds, moving_average_degre
         plt.ylabel('Views')
         plt.xticks(xticks_values, xticks_labels, rotation=xticks_rotation, fontsize=xticks_fontsize)
 
-    for i, (channel, (data, username, data_sorted)) in enumerate(channel_data_dict.items()):
+    for i, (grabber, video_infos_sorted) in enumerate(channel_data_dict.items()):
         timestamps_values = []
         views_values = []
 
-        for entry in data_sorted:
-            timestamp = entry["date"]
-            views = entry["views"]
+        for video_info in video_infos_sorted:
+            views = video_info.view_count
             if views is None or views <= 0:
                 continue
 
-            timestamps_values.append(timestamp)
+            timestamps_values.append(video_info.timestamp)
             views_values.append(views)
 
         if not moving_mean_separate:
 
             color = get_darker_color(line_colors[i])
 
-            plt.plot(timestamps_values, views_values, "^", markersize=marker_size_single, label=username, color=color)
+            plt.plot(timestamps_values, views_values, "^", markersize=marker_size_single,
+                     label=grabber.get_channel_name(), color=color)
         else:
-            plt.plot(timestamps_values, views_values, "o", markersize=marker_size_single, label=username)
+            plt.plot(timestamps_values, views_values, "o", markersize=marker_size_single,
+                     label=grabber.get_channel_name())
 
     if moving_mean_separate:
         plt.legend()
@@ -400,68 +290,27 @@ def plot(channel_data_dict: dict, title, date_from_seconds, moving_average_degre
     plt.show(block=True)
 
 
-def find_by_url(dataset, url):
-    if dataset is None:
+def find_by_url(video_infos: list[VideoInfo], url):
+    if video_infos is None:
         return None
-    for entry in dataset:
-        if "url" in entry and entry["url"] == url:
-            return entry;
+    for video_info in video_infos:
+        if url == video_info.url:
+            return video_info
     return None
 
 
-def fetch_metadata(video, credentials, fast=False):
-    try:
-        video_url = video["url"]
-
-        views_count = None
-        timestamp = None
-        uploader_id = None
-
-        if "view_count" in video:
-            views_count = video["view_count"]
-
-        if "timestamp" in video:
-            timestamp = video["timestamp"]
-
-        if "uploader_id" in video:
-            uploader_id = video["uploader_id"]
-
-        if not fast:
-            metadata = get_video_metadata(video_url, credentials)
-            views_count = metadata["view_count"]
-            upload_date_str = metadata["upload_date"]
-
-            if "uploader_id" in metadata:
-                uploader_id = metadata["uploader_id"]
-            else:
-                uploader_id = None
-
-            upload_date = datetime.strptime(upload_date_str, '%Y%m%d')
-            timestamp = upload_date.timestamp()
-            uploader_id = metadata["uploader_id"]
-
-        data_entry = {
-            "date": timestamp,
-            "views": views_count,
-            "url": video_url,
-            "uploader_id": uploader_id
-        }
-
-        return data_entry
-
-    except Exception as ex:
-        logger.error(f"Failed to get metadata for {video}: {ex}")
-        return None
-
-
-async def fetch_channel_data_offline(channel, cache_manager):
+def fetch_channel_data_offline(channel_url, cache_manager):
     logger.info("Reading from cache (offline mode)...")
-    username = get_username_from_url(channel)
+
+    grabber_class = Grabber.get_grabber_class_for_url(channel_url)
+    grabber = grabber_class(channel_url, True, None)
+
+    username = grabber.get_channel_id()
 
     dataset = cache_manager.read_cache(username)
     logger.info(f"Read {len(dataset)} videos from cache {username}")
 
-    logger.info(f"Done for {channel}!")
+    logger.info(f"Done for {channel_url}!")
     return dataset, username
 
 
@@ -482,10 +331,9 @@ def remove_outdated_entries(cached_dataset, cache_manager, timestamp_current, us
         cached_dataset.remove(entry)
 
 
-async def fetch_channel_data(
-        channel,
+def fetch_channel_data(
+        channel_url,
         cache_dir,
-        yt_dlp,
         jobs,
         date_from_seconds,
         cache_expiration_seconds,
@@ -494,27 +342,29 @@ async def fetch_channel_data(
         fast,
         credentials
 ):
-    dataset = []
+    grabber_class = Grabber.get_grabber_class_for_url(channel_url)
+    grabber = grabber_class(channel_url, offline, credentials)
+
+    video_infos = []
 
     timestamp_current = datetime.now().timestamp()
 
-    username = get_username_from_url(channel, credentials, False)
+    username = grabber.get_channel_id()
 
     if offline:
-        if cache_exists(cache_dir, username):
-            return await fetch_channel_data_offline(channel, cache_dir)
+        if cache_manager.cache_exists(username):
+            return fetch_channel_data_offline(channel_url, cache_dir)
         else:
             logger.error("Cache {} does not exist, impossible to work in offline mode!")
             return None, username
 
     outdated_cache_num = 0
 
-    logger.info(f"Downloading video list from {channel}...")
-    videos = get_video_list(channel, credentials, fast)
-    if not videos:
+    logger.info(f"Downloading video list from {channel_url}...")
+    if not grabber.videos:
         return None, username
 
-    videos_num = len(videos)
+    videos_num = len(grabber.videos)
     logger.info(f"{videos_num} videos found!")
 
     logger.info("Reading from cache and downloading...")
@@ -534,7 +384,9 @@ async def fetch_channel_data(
     cache_manager.append(username, cached_dataset, len(cached_dataset))
     cache_manager.flush_buffers()
 
-    dataset += cached_dataset
+    for cache_entry in cached_dataset:
+        video_info = VideoInfo.from_dict(cache_entry)
+        video_infos.append(video_info)
 
     futures = []
 
@@ -544,10 +396,10 @@ async def fetch_channel_data(
         alive_bar(videos_num, title="Downloading metadata", theme="classic", force_tty=True, title_length=0) as bar
     ):
 
-        for video in videos:
-            cached_entry = find_by_url(cached_dataset, video["url"])
+        for video_info in grabber.videos:
+            cached_entry = find_by_url(video_infos, video_info.url)
             if cached_entry is None:
-                future = executor.submit(fetch_metadata, video, credentials, fast)
+                future = executor.submit(grabber.fill_video_info, video_info)
                 futures.append(future)
             else:
                 bar(1, skipped=True)
@@ -556,19 +408,20 @@ async def fetch_channel_data(
 
         for future in concurrent.futures.as_completed(futures, timeout=None):
             try:
-                metadata = future.result()
-                metadata["cache_timestamp"] = datetime.now().timestamp()
-                dataset.append(metadata)
-                # write_cache(cache_dir, username, dataset)
-                if not fast:
-                    cache_manager.append(username, metadata)
+                video_info: VideoInfo = future.result()
 
-                upload_date_seconds = metadata["date"]
-                upload_date = datetime.fromtimestamp(upload_date_seconds)
+                video_infos.append(video_info)
+                # write_cache(cache_dir, username, video_infos)
+                if not fast:
+                    cache_entry = video_info.to_dict()
+                    cache_entry["cache_timestamp"] = datetime.now().timestamp()
+                    cache_manager.append(username, cache_entry)
+
+                upload_date = datetime.fromtimestamp(video_info.timestamp)
                 bar.title(upload_date.strftime("%d.%m.%Y"))
                 bar(1)
 
-                if date_from_seconds and upload_date_seconds < date_from_seconds:
+                if date_from_seconds and video_info.timestamp < date_from_seconds:
                     if not date_from_reached:
                         logger.info("Minimum timestamp reached, aborting remaining downloads...")
                     future_index = futures.index(future)
@@ -595,10 +448,10 @@ async def fetch_channel_data(
             except Exception as err:
                 logger.error(f"Downloading error: {err}")
 
-    logger.info(f"Done for {channel}!")
+    logger.info(f"Done for {channel_url}!")
     if not fast:
         cache_manager.flush_buffers()
-    return dataset, username
+    return video_infos, grabber
 
 
 def load_vertical_lines(args):
@@ -625,11 +478,11 @@ def load_vertical_lines(args):
         milestone_list.append((date_str, text))
 
 
-async def main():
+def main():
     parser = argparse.ArgumentParser(
         prog="Youtube Views dumper",
         description="Collects information about video views using yt-dlp",
-        epilog="Delete it immideately!"
+        epilog="Delete it immediately!"
     )
 
     parser.add_argument("-v", "--verbosity", required=False, type=str, default="INFO")
@@ -680,20 +533,19 @@ async def main():
     credentials = None
     if args.username is not None:
         if args.password is not None:
-            credentials = (args.username, args.password)
+            credentials = Credentials(args.username, args.password)
         else:
             password = getpass.getpass(f"Password for {args.username}: ")
-            credentials = (args.username, password)
+            credentials = Credentials(args.username, password)
 
     channel_data_dict = {}
 
     usernames = []
 
     for channel in args.channels:
-        dataset, username = await fetch_channel_data(
+        video_infos, grabber = fetch_channel_data(
             channel,
             cache_dir,
-            args.yt_dlp,
             args.jobs,
             date_from_seconds,
             cache_expiration_seconds,
@@ -702,10 +554,10 @@ async def main():
             args.fast,
             credentials
         )
-        if not dataset:
+        if not video_infos:
             continue
-        channel_data_dict[channel] = (dataset, username)
-        usernames.append(username)
+        channel_data_dict[grabber] = video_infos
+        usernames.append(grabber.get_channel_name())
 
     if not channel_data_dict:
         return 0
@@ -720,5 +572,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    # main()
-    asyncio.run(main())
+    main()

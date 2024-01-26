@@ -52,6 +52,13 @@ class CacheManager:
 
             self.cache_buffer[cache_name].append(record)
 
+    def cache_exists(self, cache_name) -> bool:
+        cache_dir = self.get_cache_dir_local(cache_name)
+        if not os.path.isdir(cache_dir):
+            return False
+
+        return len(os.listdir(cache_dir)) > 0
+
     def read_cache(self, cache_name) -> list[dict]:
         cache_entries = []
 
