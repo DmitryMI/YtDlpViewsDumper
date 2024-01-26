@@ -12,7 +12,7 @@
     <Name>YtDlpViewsDumper</Name>
     <RootNamespace>YtDlpViewsDumper</RootNamespace>
     <LaunchProvider>Standard Python launcher</LaunchProvider>
-    <CommandLineArguments>--channel "https://www.youtube.com/@TheBadComedian" --ma_degree 9 --ma_separate</CommandLineArguments>
+    <CommandLineArguments>--channel "https://vk.com/video/@a4" --ma_degree 9 --ma_separate -v DEBUG -j 32 --milestone_file "WarInUkraineMilestones.txt" --username "+79057796773"</CommandLineArguments>
     <EnableNativeCodeDebugging>False</EnableNativeCodeDebugging>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
