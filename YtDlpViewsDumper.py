@@ -340,10 +340,11 @@ def fetch_channel_data(
         cache_manager,
         offline,
         fast,
-        credentials
+        credentials,
+        args
 ):
     grabber_class = Grabber.get_grabber_class_for_url(channel_url)
-    grabber = grabber_class(channel_url, offline, credentials)
+    grabber = grabber_class(channel_url, logger.level, **vars(args), credentials=credentials)
 
     video_infos = []
 
@@ -501,6 +502,9 @@ def main():
     parser.add_argument("--channels", type=str, nargs="+")
     parser.add_argument("--milestone", type=str, nargs="+")
     parser.add_argument("--milestone_file", required=False, type=str)
+    parser.add_argument("--vk_oauth_storage", required=False, type=str, default="vk_oauth_storage.json")
+    parser.add_argument("--vk_access_token", required=False, type=str, default=None)
+    parser.add_argument("--vk_api_key", required=False, type=str, default=None)
     # parser.add_argument("--sleep_interval_requests", required=False, type=str, default=None)
 
     args = parser.parse_args()
@@ -552,7 +556,8 @@ def main():
             cache_manager,
             args.offline,
             args.fast,
-            credentials
+            credentials,
+            args
         )
         if not video_infos:
             continue

@@ -14,14 +14,17 @@ class GrabberYtDlp(Grabber):
     tag = "GrabberYtDlp"
     url_regex = None
 
-    def __init__(self, channel_url, offline: bool | None = None, creds: Credentials | None = None, **kwargs):
-        super().__init__(channel_url, offline, creds)
+    def __init__(self, channel_url, log_level: str = "INFO", **kwargs):
+        super().__init__(channel_url, log_level)
+
+        logger.setLevel(log_level)
+
         if "fast" in kwargs:
             self._fast = bool(kwargs["fast"])
         else:
             self._fast = False
 
-        if offline:
+        if "offline" in kwargs and kwargs["offline"]:
             parsed = urlparse(channel_url)
             path = parsed.path
             path_segments = path.split("/")
@@ -46,9 +49,9 @@ class GrabberYtDlp(Grabber):
             logger.warning("Fast extraction enabled. Video metadata will be inaccurate")
             self._yt_dlp_params["extractor_args"] = {'youtubetab': {'approximate_date': "a"}}
 
-        if creds is not None:
-            self._yt_dlp_params["username"] = creds.username
-            self._yt_dlp_params["password"] = creds.password
+        if "credentials" in kwargs and kwargs["credentials"] is not None :
+            self._yt_dlp_params["username"] = kwargs["credentials"].username
+            self._yt_dlp_params["password"] = kwargs["credentials"].password
 
         self._ytdl = yt_dlp.YoutubeDL(self._yt_dlp_params)
         self._channel_data = self._ytdl.extract_info(channel_url, download=False)

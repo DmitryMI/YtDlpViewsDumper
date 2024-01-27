@@ -25,6 +25,7 @@ class VideoInfo:
 
         return video_info
 
+
 class Credentials:
     def __init__(self, username, password):
         self.username = username
@@ -35,10 +36,9 @@ class Grabber:
     tag = None
     url_regex = None
 
-    def __init__(self, channel_url: str, offline: bool, creds: Credentials | None):
+    def __init__(self, channel_url: str, log_level: str = "INFO"):
         self._channel_url = channel_url
-        self._offline = offline
-        self._credentials = creds
+        self._log_level = log_level
         self.videos: list[VideoInfo] = []
 
     def fill_video_info(self, video_info: VideoInfo) -> VideoInfo:
