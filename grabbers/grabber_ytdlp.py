@@ -90,6 +90,11 @@ class GrabberYtDlp(Grabber):
     def get_channel_id(self):
         return self._channel_id
 
+    def get_channel_name_safe(self) -> str:
+        if self._username is not None:
+            return self._username
+        return self._channel_id
+
     def fill_video_info(self, video_info: VideoInfo):
 
         if self._fast:

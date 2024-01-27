@@ -8,6 +8,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, Cancelle
 from datetime import datetime
 
 import matplotlib.pyplot as plt
+import numpy as np
 from alive_progress import alive_bar
 
 from cache_manager import CacheManager
@@ -94,9 +95,40 @@ def weight_linear(n, index_shift):
     return n - abs(index_shift * 2)
 
 
-def get_moving_mean(video_infos_sorted: list[VideoInfo], n, weight_callable):
-    moving_mean = []
+def get_spline_smoothing(timestamps, view_counts, spline_degree, spline_factor, spline_length):
+    from scipy.interpolate import make_interp_spline, BSpline
 
+    unique_timestamps, indexes = np.unique(timestamps, return_index=True)
+    min_timestamp = unique_timestamps.min()
+    max_timestamp = unique_timestamps.max()
+
+    views = []
+    for i in indexes:
+        views.append(view_counts[i])
+
+    # 300 represents number of points to make between T.min and T.max
+    if spline_length is not None:
+        x_len = spline_length
+    else:
+        x_len = int(len(unique_timestamps) * spline_factor)
+
+    x_new = np.linspace(min_timestamp, max_timestamp, x_len)
+    logger.info(f"Generating spline with {x_len} x values")
+    spl = make_interp_spline(unique_timestamps, views, k=spline_degree)  # type: BSpline
+    smooth = spl(x_new)
+
+    '''
+    y_values = []
+    for i, x in enumerate(x_new):
+        y = smooth[i]
+        y_values.append(y)
+    '''
+    return x_new, smooth
+
+
+def get_moving_mean(video_infos_sorted: list[VideoInfo], n, weight_callable):
+    x_values = []
+    y_values = []
     for i in range(len(video_infos_sorted)):
         views_accumulator = 0
         items_num = min(i + 1, n)
@@ -120,10 +152,10 @@ def get_moving_mean(video_infos_sorted: list[VideoInfo], n, weight_callable):
 
         views_average = views_accumulator / divisor
 
-        mean_entry = {"timestamp": video_infos_sorted[i].timestamp, "views_avg": views_average}
-        moving_mean.append(mean_entry)
+        x_values.append( video_infos_sorted[i].timestamp)
+        y_values.append(views_average)
 
-    return moving_mean
+    return x_values, y_values
 
 
 def dict_split(data_sorted, x_key="timestamp", y_key="views"):
@@ -150,13 +182,18 @@ def add_vertical_lines():
 
 
 def plot(channel_data_dict: dict[Grabber, list[VideoInfo]], title, date_from_seconds, moving_average_degree,
-         moving_mean_separate=False):
+         spline_degree, spline_factor, spline_length,
+         separate_dots=False):
+
+    if spline_factor is not None and spline_length is not None:
+        raise Exception("--spline_factor and --spline_length are mutually exclusive")
+
     xticks_fontsize = 8
     xticks_rotation = 25
     marker_size_total = 4
     marker_size_single = 2
 
-    if moving_mean_separate:
+    if separate_dots:
         total_plots = 3
     else:
         total_plots = 2
@@ -205,9 +242,11 @@ def plot(channel_data_dict: dict[Grabber, list[VideoInfo]], title, date_from_sec
             timestamps_values.append(timestamp)
             views_values.append(views)
             views_total_values.append(views_total_counter)
-
+        channel_name = grabber.get_channel_name()
+        if channel_name is None:
+            channel_name = grabber.get_channel_id()
         plt.plot(timestamps_values, views_total_values, linestyle='-', marker='o', markersize=marker_size_total,
-                 label=grabber.get_channel_name())
+                 label=channel_name)
 
     plt.legend()
 
@@ -223,7 +262,20 @@ def plot(channel_data_dict: dict[Grabber, list[VideoInfo]], title, date_from_sec
     add_vertical_lines()
 
     plt.subplot(total_plots, 1, 2)
-    plt.title(f"Views per video (moving average, N = {moving_average_degree})")
+    title_fragments = []
+
+    if moving_average_degree is not None:
+        title_fragments.append(f"moving average N = {moving_average_degree}")
+
+    if spline_factor is not None:
+        title_fragments.append(f"s-factor = {spline_factor}")
+    if spline_degree is not None:
+        title_fragments.append(f"s-degree = {spline_degree}")
+    if spline_length is not None:
+        title_fragments.append(f"s-length = {spline_length}")
+
+    plt.title("Views per video (" + ", ".join(title_fragments) + ")")
+
     plt.xlabel("Date")
     plt.ylabel('Views')
     plt.xticks(xticks_values, xticks_labels, rotation=xticks_rotation, fontsize=xticks_fontsize)
@@ -231,9 +283,19 @@ def plot(channel_data_dict: dict[Grabber, list[VideoInfo]], title, date_from_sec
     line_colors = []
 
     for grabber, video_infos_sorted in channel_data_dict.items():
-        moving_mean = get_moving_mean(video_infos_sorted, moving_average_degree, weight_linear)
-        moving_mean_timestamps, moving_mean_value = dict_split(moving_mean, y_key="views_avg")
-        line = plt.plot(moving_mean_timestamps, moving_mean_value, linestyle='-', label=grabber.get_channel_name() + " (moving average)")
+        if moving_average_degree is not None:
+            ma_x, ma_y = get_moving_mean(video_infos_sorted, moving_average_degree, weight_linear)
+        else:
+            ma_x = [video_info.timestamp for video_info in video_infos_sorted]
+            ma_y = [video_info.view_count for video_info in video_infos_sorted]
+
+        if spline_degree is not None and (spline_factor is not None or spline_length is not None):
+            ma_x, ma_y = get_spline_smoothing(ma_x, ma_y, spline_degree, spline_factor, spline_length)
+
+        channel_name = grabber.get_channel_name_safe()
+
+        line = plt.plot(ma_x, ma_y, linestyle='-',
+                        label=channel_name + " (moving average)")
         if line:
             line_colors.append(line[0]._color)
 
@@ -249,7 +311,7 @@ def plot(channel_data_dict: dict[Grabber, list[VideoInfo]], title, date_from_sec
 
     add_vertical_lines()
 
-    if moving_mean_separate:
+    if separate_dots:
         plt.subplot(total_plots, 1, 3)
         plt.title("Views per video")
         plt.xlabel("Date")
@@ -268,17 +330,17 @@ def plot(channel_data_dict: dict[Grabber, list[VideoInfo]], title, date_from_sec
             timestamps_values.append(video_info.timestamp)
             views_values.append(views)
 
-        if not moving_mean_separate:
+        if not separate_dots:
 
             color = get_darker_color(line_colors[i])
 
             plt.plot(timestamps_values, views_values, "^", markersize=marker_size_single,
-                     label=grabber.get_channel_name(), color=color)
+                     label=grabber.get_channel_name_safe(), color=color)
         else:
             plt.plot(timestamps_values, views_values, "o", markersize=marker_size_single,
-                     label=grabber.get_channel_name())
+                     label=grabber.get_channel_name_safe())
 
-    if moving_mean_separate:
+    if separate_dots:
         plt.legend()
         if date_from_seconds and date_from_seconds > 0:
             left, _ = plt.xlim()
@@ -299,11 +361,11 @@ def find_by_url(video_infos: list[VideoInfo], url):
     return None
 
 
-def fetch_channel_data_offline(channel_url, cache_manager):
+def fetch_channel_data_offline(channel_url, cache_manager, args):
     logger.info("Reading from cache (offline mode)...")
 
     grabber_class = Grabber.get_grabber_class_for_url(channel_url)
-    grabber = grabber_class(channel_url, True, None)
+    grabber = grabber_class(channel_url, True, **vars(args))
 
     username = grabber.get_channel_id()
 
@@ -311,7 +373,12 @@ def fetch_channel_data_offline(channel_url, cache_manager):
     logger.info(f"Read {len(dataset)} videos from cache {username}")
 
     logger.info(f"Done for {channel_url}!")
-    return dataset, username
+    video_infos = []
+    for entry in dataset:
+        video_info = VideoInfo.from_dict(entry)
+        video_infos.append(video_info)
+
+    return video_infos, grabber
 
 
 def remove_outdated_entries(cached_dataset, cache_manager, timestamp_current, username, cache_expiration_seconds):
@@ -354,7 +421,7 @@ def fetch_channel_data(
 
     if offline:
         if cache_manager.cache_exists(username):
-            return fetch_channel_data_offline(channel_url, cache_dir)
+            return fetch_channel_data_offline(channel_url, cache_manager, args)
         else:
             logger.error("Cache {} does not exist, impossible to work in offline mode!")
             return None, username
@@ -389,15 +456,29 @@ def fetch_channel_data(
         video_info = VideoInfo.from_dict(cache_entry)
         video_infos.append(video_info)
 
+    video_infos_not_filled = []
     futures = []
+
+    # Filter videos that already have all required information
+    for video_info in grabber.videos:
+        if video_info.timestamp is not None and video_info.view_count is not None and not video_info.used_fast_mode:
+            cached_entry = find_by_url(video_infos, video_info.url)
+            if cached_entry is None:
+                cached_entry = video_info.to_dict()
+                cached_entry["cache_timestamp"] = datetime.now().timestamp()
+                cache_manager.append(username, cached_entry)
+            video_infos.append(video_info)
+        else:
+            video_infos_not_filled.append(video_info)
 
     with (
         ThreadPoolExecutor(max_workers=jobs) as executor,
         # ProcessPoolExecutor(max_workers=jobs) as executor,
-        alive_bar(videos_num, title="Downloading metadata", theme="classic", force_tty=True, title_length=0) as bar
+        alive_bar(len(video_infos_not_filled), title="Downloading metadata", theme="classic", force_tty=True,
+                  title_length=0) as bar
     ):
 
-        for video_info in grabber.videos:
+        for video_info in video_infos_not_filled:
             cached_entry = find_by_url(video_infos, video_info.url)
             if cached_entry is None:
                 future = executor.submit(grabber.fill_video_info, video_info)
@@ -495,8 +576,12 @@ def main():
     parser.add_argument("--username", required=False, type=str, default=None)
     parser.add_argument("--password", required=False, type=str, default=None)
     parser.add_argument("--date_from", required=False, type=str, default=None)
-    parser.add_argument("--ma_degree", required=False, type=int, default=9)
-    parser.add_argument("--ma_separate", required=False, action="store_true")
+    parser.add_argument("--spline", required=False, action="store_true")
+    parser.add_argument("--spline_degree", required=False, type=int, default=3)
+    parser.add_argument("--spline_factor", required=False, type=float, default=None)
+    parser.add_argument("--spline_length", required=False, type=int, default=None)
+    parser.add_argument("--ma_degree", required=False, type=int, default=1)
+    parser.add_argument("--separate_dots", required=False, action="store_true")
     parser.add_argument("--cache_dir", required=False, type=str, default="cache")
     parser.add_argument("-j", "--jobs", required=False, type=int, default=32)
     parser.add_argument("--channels", type=str, nargs="+")
@@ -505,13 +590,18 @@ def main():
     parser.add_argument("--vk_oauth_storage", required=False, type=str, default="vk_oauth_storage.json")
     parser.add_argument("--vk_access_token", required=False, type=str, default=None)
     parser.add_argument("--vk_api_key", required=False, type=str, default=None)
-    # parser.add_argument("--sleep_interval_requests", required=False, type=str, default=None)
+    parser.add_argument("--vk_api_json", required=False, type=str, default=None)
 
     args = parser.parse_args()
 
     logging.basicConfig(format=LOG_FORMAT)
     logger.setLevel(args.verbosity)
 
+    '''
+    if args.ma_degree is not None and args.spline:
+        logger.error("--ma_agree and --spline are mutually exclusive")
+        return
+    '''
     if args.yt_dlp_verbosity is None:
         yt_dlp_logger.setLevel(args.verbosity)
     else:
@@ -562,7 +652,10 @@ def main():
         if not video_infos:
             continue
         channel_data_dict[grabber] = video_infos
-        usernames.append(grabber.get_channel_name())
+        channel_name = grabber.get_channel_name()
+        if channel_name is None:
+            channel_name = grabber.get_channel_id()
+        usernames.append(channel_name)
 
     if not channel_data_dict:
         return 0
@@ -571,7 +664,7 @@ def main():
     if date_from_seconds:
         plot_title = f"{plot_title} (from {date_from_str})"
 
-    plot(channel_data_dict, plot_title, date_from_seconds, moving_average_degree, args.ma_separate)
+    plot(channel_data_dict, plot_title, date_from_seconds, moving_average_degree, args.spline_degree, args.spline_factor, args.spline_length, args.separate_dots)
 
     return 0
 

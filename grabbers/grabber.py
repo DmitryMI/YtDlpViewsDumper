@@ -47,6 +47,9 @@ class Grabber:
     def get_channel_name(self) -> str | None:
         raise NotImplemented()
 
+    def get_channel_name_safe(self) -> str:
+        raise NotImplemented()
+
     def get_channel_id(self) -> str:
         raise NotImplemented()
 
