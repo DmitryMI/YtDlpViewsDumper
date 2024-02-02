@@ -398,3 +398,5 @@ FodyWeavers.xsd
 *.sln.iml
 
 *.cache.json
+tests/vk_config.v2.json
+tests/vk_oauth_storage.json

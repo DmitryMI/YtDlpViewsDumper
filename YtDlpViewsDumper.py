@@ -421,9 +421,9 @@ def fetch_channel_data(
 
     if offline:
         if cache_manager.cache_exists(username):
-            return fetch_channel_data_offline(channel_url, cache_manager, args)
+            return fetch_channel_da.ta_offline(channel_url, cache_manager, args)
         else:
-            logger.error("Cache {} does not exist, impossible to work in offline mode!")
+            logger.error(f"Cache {username} does not exist, impossible to work in offline mode!")
             return None, username
 
     outdated_cache_num = 0
@@ -580,7 +580,7 @@ def main():
     parser.add_argument("--spline_degree", required=False, type=int, default=3)
     parser.add_argument("--spline_factor", required=False, type=float, default=None)
     parser.add_argument("--spline_length", required=False, type=int, default=None)
-    parser.add_argument("--ma_degree", required=False, type=int, default=1)
+    parser.add_argument("--ma_degree", required=False, type=int, default=None)
     parser.add_argument("--separate_dots", required=False, action="store_true")
     parser.add_argument("--cache_dir", required=False, type=str, default="cache")
     parser.add_argument("-j", "--jobs", required=False, type=int, default=32)
