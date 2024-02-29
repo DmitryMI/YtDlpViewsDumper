@@ -73,7 +73,7 @@ class CacheManager:
                 logger.debug(f"Unexpected file {file_path} in cache {cache_name}")
                 continue
 
-            with open(file_path, "r") as infile:
+            with open(file_path, "r", encoding="utf-8") as infile:
                 cache_entries += json.load(infile)
 
         return cache_entries
@@ -100,8 +100,8 @@ class CacheManager:
                 chunk_num_current = chunk_max + 1
             cache_chunk_name = os.path.join(cache_dir, f"{cache_name}-{chunk_num_current:06}.cache.json")
 
-            with open(cache_chunk_name, "w") as fout:
-                json.dump(buffer, fout, indent=4)
+            with open(cache_chunk_name, "w", encoding="utf-8") as fout:
+                json.dump(buffer, fout, indent=4, ensure_ascii=False)
 
             logger.debug(f"Flushed chunk {chunk_num_current} with {len(buffer)} records to {cache_chunk_name}")
 
