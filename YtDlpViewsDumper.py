@@ -4,6 +4,7 @@ import getpass
 import logging
 import os
 import os.path
+import re
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, CancelledError
 from datetime import datetime
 
@@ -152,7 +153,7 @@ def get_moving_mean(video_infos_sorted: list[VideoInfo], n, weight_callable):
 
         views_average = views_accumulator / divisor
 
-        x_values.append( video_infos_sorted[i].timestamp)
+        x_values.append(video_infos_sorted[i].timestamp)
         y_values.append(views_average)
 
     return x_values, y_values
@@ -184,7 +185,6 @@ def add_vertical_lines():
 def plot(channel_data_dict: dict[Grabber, list[VideoInfo]], title, date_from_seconds, moving_average_degree,
          spline_degree, spline_factor, spline_length,
          separate_dots=False):
-
     if spline_factor is not None and spline_length is not None:
         raise Exception("--spline_factor and --spline_length are mutually exclusive")
 
@@ -560,6 +560,11 @@ def load_vertical_lines(args):
         milestone_list.append((date_str, text))
 
 
+def filter_video_infos_by_title(video_infos, name_pattern) -> list[VideoInfo]:
+    re_comp = re.compile(name_pattern)
+    return list(filter(lambda video_info: re_comp.match(video_info.title), video_infos))
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="Youtube Views dumper",
@@ -571,13 +576,14 @@ def main():
     parser.add_argument("-f", "--fast", required=False, action="store_true", default=False)
     parser.add_argument("--yt_dlp_verbosity", required=False, type=str, default=None)
     parser.add_argument("--yt_dlp", required=False, type=str, default="yt-dlp")
+    parser.add_argument("--title_regex", required=False, type=str, default=None)
     parser.add_argument("--cache_expiration", required=False, default=30)
     parser.add_argument("--offline", required=False, default=False, action="store_true")
     parser.add_argument("--username", required=False, type=str, default=None)
     parser.add_argument("--password", required=False, type=str, default=None)
     parser.add_argument("--date_from", required=False, type=str, default=None)
     parser.add_argument("--spline", required=False, action="store_true")
-    parser.add_argument("--spline_degree", required=False, type=int, default=3)
+    parser.add_argument("--spline_degree", required=False, type=int, default=None)
     parser.add_argument("--spline_factor", required=False, type=float, default=None)
     parser.add_argument("--spline_length", required=False, type=int, default=None)
     parser.add_argument("--ma_degree", required=False, type=int, default=None)
@@ -619,7 +625,6 @@ def main():
         date_from_seconds = date_from.timestamp()
         logger.info(f"Minimum timestamp set to {date_from_str}({date_from_seconds} seconds)")
     else:
-        date_from = None
         date_from_seconds = None
 
     moving_average_degree = args.ma_degree
@@ -649,8 +654,15 @@ def main():
             credentials,
             args
         )
+
+        if args.title_regex is not None:
+            logger.info(f"Filtering by title regex: '{args.title_regex}'")
+            video_infos = filter_video_infos_by_title(video_infos, args.title_regex)
+            logger.info(f"Videos remaining after Title filtering: {len(video_infos)}")
+
         if not video_infos:
             continue
+
         channel_data_dict[grabber] = video_infos
         channel_name = grabber.get_channel_name()
         if channel_name is None:
@@ -664,7 +676,8 @@ def main():
     if date_from_seconds:
         plot_title = f"{plot_title} (from {date_from_str})"
 
-    plot(channel_data_dict, plot_title, date_from_seconds, moving_average_degree, args.spline_degree, args.spline_factor, args.spline_length, args.separate_dots)
+    plot(channel_data_dict, plot_title, date_from_seconds, moving_average_degree, args.spline_degree,
+         args.spline_factor, args.spline_length, args.separate_dots)
 
     return 0
 

@@ -9,6 +9,8 @@
 *.user
 *.userosscache
 *.sln.docstates
+**/vk_oauth_storage.json
+**/vk_api.json
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs

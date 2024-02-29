@@ -107,6 +107,11 @@ class GrabberVk(Grabber):
             raise Exception(f"Failed to get group info with code: {response.status_code}")
 
         data = json.loads(response.content)
+        if "error" in data:
+            error_item = data["error"]
+            error_code = error_item["error_code"]
+            error_msg = error_item["error_msg"]
+            raise Exception(f"VK API Error {error_code}: {error_msg}")
         groups = data["response"]["groups"]
         self._channel_id = groups[0]["id"]
         self._channel_name = groups[0]["name"]
@@ -146,6 +151,7 @@ class GrabberVk(Grabber):
             video_info.timestamp = item["date"]
             video_info.view_count = item["views"]
             video_info.uploader_id = item["owner_id"]
+            video_info.title = item["title"]
             video_infos.append(video_info)
 
         self.logger.debug(f"Fetched {offset} video infos via VK API")

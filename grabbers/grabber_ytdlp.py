@@ -76,6 +76,7 @@ class GrabberYtDlp(Grabber):
                      (videos, shorts or live) via the URL")
 
             video_info = VideoInfo(grabber_tag=self.tag, url=video_data["url"], used_fast_mode=self._fast)
+            video_info.title = video_data["title"]
 
             if "upload_date" in video_data:
                 upload_date_str = video_data["upload_date"]
@@ -108,5 +109,6 @@ class GrabberYtDlp(Grabber):
         video_info.timestamp = upload_date.timestamp()
         video_info.used_fast_mode = False
         video_info.uploader_id = video_data["uploader_id"] if "uploader_id" in video_data else None
+        video_info.title = video_data["title"]
 
         return video_info

@@ -9,6 +9,7 @@ class VideoInfo:
         self.view_count = None
         self.timestamp = None
         self.uploader_id = None
+        self.title = None
 
     def to_dict(self):
         return self.__dict__
