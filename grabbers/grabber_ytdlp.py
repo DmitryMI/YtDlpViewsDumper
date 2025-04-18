@@ -43,6 +43,7 @@ class GrabberYtDlp(Grabber):
             "extract_flat": True,
             "no-sponsorblock": True,
             "logger": yt_dlp_logger,
+            'socket_timeout': 10,
         }
 
         if self._fast:
