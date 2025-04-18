@@ -42,7 +42,7 @@ class Grabber:
         self._log_level = log_level
         self.videos: list[VideoInfo] = []
 
-    def fill_video_info(self, video_info: VideoInfo) -> VideoInfo:
+    def fill_video_info(self, video_info: VideoInfo, process_timeout: float | None) -> VideoInfo:
         raise NotImplemented()
 
     def get_channel_name(self) -> str | None:

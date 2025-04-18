@@ -7,7 +7,7 @@ import os.path
 import re
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, CancelledError
 from datetime import datetime
-
+from multiprocessing import get_context
 import matplotlib.pyplot as plt
 import numpy as np
 from alive_progress import alive_bar
@@ -408,6 +408,7 @@ def fetch_channel_data(
         offline,
         fast,
         credentials,
+        job_timeout,
         args
 ):
     grabber_class = Grabber.get_grabber_class_for_url(channel_url)
@@ -421,7 +422,7 @@ def fetch_channel_data(
 
     if offline:
         if cache_manager.cache_exists(username):
-            return fetch_channel_da.ta_offline(channel_url, cache_manager, args)
+            return fetch_channel_data_offline(channel_url, cache_manager, args)
         else:
             logger.error(f"Cache {username} does not exist, impossible to work in offline mode!")
             return None, username
@@ -471,9 +472,9 @@ def fetch_channel_data(
         else:
             video_infos_not_filled.append(video_info)
 
+    ctx = get_context("spawn")  # Use "fork" or "spawn" depending on platform
     with (
-        ThreadPoolExecutor(max_workers=jobs) as executor,
-        # ProcessPoolExecutor(max_workers=jobs) as executor,
+        ProcessPoolExecutor(max_workers=jobs, mp_context=ctx) as executor,
         alive_bar(len(video_infos_not_filled), title="Downloading metadata", theme="classic", force_tty=True,
                   title_length=0) as bar
     ):
@@ -481,16 +482,19 @@ def fetch_channel_data(
         for video_info in video_infos_not_filled:
             cached_entry = find_by_url(video_infos, video_info.url)
             if cached_entry is None:
-                future = executor.submit(grabber.fill_video_info, video_info)
+                future = executor.submit(grabber.fill_video_info, video_info, job_timeout)
                 futures.append(future)
             else:
                 bar(1, skipped=True)
 
         date_from_reached = False
 
-        for future in concurrent.futures.as_completed(futures, timeout=None):
+        for future in concurrent.futures.as_completed(futures):
             try:
                 video_info: VideoInfo = future.result()
+                if video_info is None:
+                    bar(1, skipped=True)
+                    continue
 
                 video_infos.append(video_info)
                 # write_cache(cache_dir, username, video_infos)
@@ -525,9 +529,12 @@ def fetch_channel_data(
                     date_from_reached = True
 
             except CancelledError as err:
-                # bar(1, skipped = True)
-                pass
+                bar(1, skipped = True)
+            except TimeoutError as err:
+                bar(1, skipped=True)
+                logger.error("Timeout")
             except Exception as err:
+                bar(1, skipped=True)
                 logger.error(f"Downloading error: {err}")
 
     logger.info(f"Done for {channel_url}!")
@@ -582,6 +589,7 @@ def main():
     parser.add_argument("--username", required=False, type=str, default=None)
     parser.add_argument("--password", required=False, type=str, default=None)
     parser.add_argument("--date_from", required=False, type=str, default=None)
+    parser.add_argument("--timeout", required=False, type=float, default=30.0)
     parser.add_argument("--spline", required=False, action="store_true")
     parser.add_argument("--spline_degree", required=False, type=int, default=None)
     parser.add_argument("--spline_factor", required=False, type=float, default=None)
@@ -652,6 +660,7 @@ def main():
             args.offline,
             args.fast,
             credentials,
+            args.timeout,
             args
         )
 

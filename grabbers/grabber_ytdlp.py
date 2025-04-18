@@ -1,4 +1,7 @@
 import logging
+import os
+import sys
+import threading
 from datetime import datetime
 from urllib.parse import urlparse
 
@@ -97,20 +100,38 @@ class GrabberYtDlp(Grabber):
             return self._username
         return self._channel_id
 
-    def fill_video_info(self, video_info: VideoInfo):
+    @staticmethod
+    def kill_process():
+        logger.error(f"Watchdog timeout. Killing process {os.getpid()}")
+        sys.exit(1)
+
+    def fill_video_info(self, video_info: VideoInfo, process_timeout: float | None):
 
         if self._fast:
             return
 
-        ytdl = yt_dlp.YoutubeDL(self._yt_dlp_params)
-        video_data = ytdl.extract_info(video_info.url, download=False, process=False)
-        video_info.view_count = video_data["view_count"]
+        if process_timeout is not None:
+            watchdog = threading.Timer(process_timeout, GrabberYtDlp.kill_process)
+            watchdog.start()
+        else:
+            watchdog = None
 
-        upload_date_str = video_data["upload_date"]
-        upload_date = datetime.strptime(upload_date_str, '%Y%m%d')
-        video_info.timestamp = upload_date.timestamp()
-        video_info.used_fast_mode = False
-        video_info.uploader_id = video_data["uploader_id"] if "uploader_id" in video_data else None
-        video_info.title = video_data["title"]
+        try:
+            ytdl = yt_dlp.YoutubeDL(self._yt_dlp_params)
+            video_data = ytdl.extract_info(video_info.url, download=False, process=False)
+            video_info.view_count = video_data["view_count"]
+
+            upload_date_str = video_data["upload_date"]
+            upload_date = datetime.strptime(upload_date_str, '%Y%m%d')
+            video_info.timestamp = upload_date.timestamp()
+            video_info.used_fast_mode = False
+            video_info.uploader_id = video_data["uploader_id"] if "uploader_id" in video_data else None
+            video_info.title = video_data["title"]
+        except Exception as e:
+            logger.error(f"Failed to get video info from yt-dlp: {e}")
+            return None
+        finally:
+            if watchdog is not None:
+                watchdog.cancel()
 
         return video_info
