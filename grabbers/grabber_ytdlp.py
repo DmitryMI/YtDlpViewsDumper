@@ -54,8 +54,8 @@ class GrabberYtDlp(Grabber):
             self._yt_dlp_params["username"] = kwargs["credentials"].username
             self._yt_dlp_params["password"] = kwargs["credentials"].password
 
-        self._ytdl = yt_dlp.YoutubeDL(self._yt_dlp_params)
-        self._channel_data = self._ytdl.extract_info(channel_url, download=False)
+        ytdl = yt_dlp.YoutubeDL(self._yt_dlp_params)
+        self._channel_data = ytdl.extract_info(channel_url, download=False)
         if "channel" in self._channel_data:
             self._username = self._channel_data["channel"]
         else:
@@ -102,7 +102,8 @@ class GrabberYtDlp(Grabber):
         if self._fast:
             return
 
-        video_data = self._ytdl.extract_info(video_info.url, download=False, process=False)
+        ytdl = yt_dlp.YoutubeDL(self._yt_dlp_params)
+        video_data = ytdl.extract_info(video_info.url, download=False, process=False)
         video_info.view_count = video_data["view_count"]
 
         upload_date_str = video_data["upload_date"]
